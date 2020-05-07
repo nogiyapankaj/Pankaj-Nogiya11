@@ -1,0 +1,2 @@
+"uuid","key_combination","salesorg","dist_channel","customer_number","material","valid_from","valid_to","action","unique_key","status","sap_executed","error_description","update_ts","line_item_seq"
+"210948ae-3b83-48e5-af81-f2b2cfd6eed7","Ship-To Customer","US99","01","69004603","84884547","01/29/2019","12/31/9999","Add/Change","US99-01-69004603-84884547-01/29/2019-12/31/9999-Add/Change","Success","Yes","","2019-06-19_14-19-46","000001"

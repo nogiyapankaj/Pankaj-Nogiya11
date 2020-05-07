@@ -1,0 +1,13 @@
+property_name,property_value_dev,property_value_qa,property_value_prod
+sap_credentials,OTC-OM-NA-SAP Order Processing N6A,OTC-OM-NA-SAP Order Processing N6A,OTC-OM-NA-SAP Order Processing N6P
+sap_connection_name,N6A NA SC Acc,N6A NA SC Acc,N6P NA Prod
+mail_credentials,OTC-OM-NA-Test Email,OTC-OM-NA-Test Email,SS-OTC-OM-NA-BIM Email
+recipient_to,rbs2cwf003.im@pg.com,rbs2cwf003.im@pg.com,"yuvienco.rb.1@pg.com,reed.d.10@pg.com"
+recipient_from,rbs2cwf003.im@pg.com,rbs2cwf003.im@pg.com,NABIMExclusion.im@pg.com
+default_recipient_to,rbs2cwf003.im@pg.com,rbs2cwf003.im@pg.com,NABIMExclusion.im@pg.com
+valid_email_domains,"pg.com,genpact.com,genpact.digital","pg.com,genpact.com,genpact.digital",pg.com
+bim_exclusion_inbox_name,Inbox - BIM,Inbox - BIM,INBOX
+base_url,https://pgone.sharepoint.com/sites/NAaDAPTOM/OMdata,https://pgone.sharepoint.com/sites/NAaDAPTOM/OMdata,https://pgone.sharepoint.com/sites/NAaDAPTOM/OMdata
+api_url_summary_report,/_api/Web/GetFolderByServerRelativeUrl('/sites/NAaDAPTOM/OMdata/Shared%20Documents/S2C-NA-US%20Process%20Output/MD-BIM-Exclusion')/Files/,/_api/Web/GetFolderByServerRelativeUrl('/sites/NAaDAPTOM/OMdata/Shared%20Documents/S2C-NA-US%20Process%20Output/MD-BIM-Exclusion')/Files/,/_api/Web/GetFolderByServerRelativeUrl('/sites/NAaDAPTOM/OMdata/Shared%20Documents/S2C-NA-US%20Process%20Output/MD-BIM-Exclusion')/Files/
+api_url_exclusion_report,/_api/Web/GetFolderByServerRelativeUrl('/sites/NAaDAPTOM/OMdata/Shared%20Documents/S2C-NA-US%20Process%20Output/MD-BIM-Exclusion')/Files/,/_api/Web/GetFolderByServerRelativeUrl('/sites/NAaDAPTOM/OMdata/Shared%20Documents/S2C-NA-US%20Process%20Output/MD-BIM-Exclusion')/Files/,/_api/Web/GetFolderByServerRelativeUrl('/sites/NAaDAPTOM/OMdata/Shared%20Documents/S2C-NA-US%20Process%20Output/MD-BIM-Exclusion')/Files/
+sharepoint_credential,OTC-OM-NA-VMI SharePoint Rest,OTC-OM-NA-VMI SharePoint Rest,OTC-OM-NA-VMI SharePoint Rest
