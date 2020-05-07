@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config" scriptlang="groovy">	
+	
+	<var-def name="full_screenshot_script"><![CDATA[
+       import org.sikuli.script.Screen
+       def screen = new Screen()
+       return screen.capture(screen.getBounds()).getFile()
+  	]]></var-def>
+		
+	<var-def name="running_processes_script"><![CDATA[
+		import java.util.regex.Pattern
+		import java.util.regex.Matcher
+		def proc = Pattern.compile("^.*\\.exe")
+		def processes = []
+		def process = Runtime.getRuntime().exec("tasklist.exe")
+		def scanner = new Scanner(new InputStreamReader(process.getInputStream()))
+		while (scanner.hasNext()) {
+			def matcher = proc.matcher(scanner.nextLine())
+			while (matcher.find()) {
+				processes.add(matcher.group(0))
+			}
+		}
+		scanner.close()
+		return processes
+  	]]></var-def>
+  	
+  	<var-def name="kill_sap_script"><![CDATA[
+  		Runtime.getRuntime().exec("taskkill /IM saplogon.exe /F").waitFor()
+  	]]></var-def>
+  	
+  	<script><![CDATA[
+  		import java.text.SimpleDateFormat;
+  		import java.util.concurrent.TimeUnit
+  		import org.openqa.selenium.NoSuchWindowException
+  		import org.openqa.selenium.TimeoutException
+  		
+  		def bim_common_configs = [:]
+		BIM_COMMON_CONFIGS.getWrappedObject().each { k, v ->
+			bim_common_configs.put(k.toString(), v.toString())
+		}
+  			
+		launchSAP = {
+			open(bim_common_configs["SAPLOGON_PATH"])
+						
+			log.info("Looking for window: " + bim_common_configs["SAP_LOGON_WND"])
+			waitAndSwitchTo(bim_common_configs["SAP_LOGON_WND"], Integer.valueOf(bim_common_configs["SAP_LONG_WAIT"]))
+		}
+  		
+  		/**
+  		* Waits specified seconds until a window by locator is present and then switches to it
+  		*/	
+  		 waitAndSwitchTo = { locator, seconds ->
+  			log.info("Attempting to find window: ${locator}")
+  			
+  			Wait().withTimeout(seconds, TimeUnit.SECONDS).ignoring(NoSuchWindowException.class).until({ switchToExistingWindow(locator, 500) })	
+  			switchTo().window(locator)
+  			
+  			log.info("Successfully switched to window: ${locator}")
+  		}
+  		
+  		isWindowPresent = { locator, seconds ->
+  			try {
+  				waitAndSwitchTo(locator, seconds)
+  				return true
+  			} catch (TimeoutException te) {
+  				log.warn ("Unable to find window with locator: " + locator)
+  				return false
+  			}
+  		}
+  		
+  		zkDateTimeFormat = {
+  			return new SimpleDateFormat("MM/dd/yyyy HH:mm:ss")
+  		}
+  		
+  		zkNowDateTime = {
+  			return sys.datetime(zkDateTimeFormat().toPattern())
+  		}
+  		
+  		zkDateTimeAdd = { int hours ->
+			def calendar = Calendar.getInstance()
+			calendar.add(Calendar.HOUR, hours)
+			
+			return zkDateTimeFormat().format(calendar.getTime())
+  		}
+  		sleep_order = {locked_order_sleep ->
+  		
+  		sleep(locked_order_sleep*1000*60);
+  		}
+  		
+  		
+  		nowDateTimeFormat = {
+  			return new SimpleDateFormat("yyyy-MM-dd_HH-mm-ss")
+  		}
+  		nowDateTime = {
+  			return sys.datetime(nowDateTimeFormat().toPattern())
+  		} 
+  		
+  	]]></script>
+</config>

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+	
+	<!--
+	 Steps : - 
+		BT-Check If Mail Present v1.0-OTC-OM-NA-BIM-Exclusion
+			- Bot responsible to check if any more BIM Exclusion mails are in the inbox once the processing for one mail is complete.
+			
+		
+		Input :-
+		  i. Configuration parameters from DS_OTC_OM_NA_BIM_Exclusion_Configurations datastore.
+		   
+		Output :- 
+		
+		   i. A flag (exclusion_mail_found) is set to true if more mails are found if not it is set to false.
+		  
+	-->
+	
+	<include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+	<include-config code="BT-APP Utils v1.0-OTC-OM-NA-BIM-Exclusion" />
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Check If Mail Present v1.0-OTC-OM-NA-BIM-Exclusion" Task Started.
+		</template>
+	</log>	
+	
+	<var-def name="Email_Credentials">
+		<template>${BIM_CONFIGS.getWrappedObject().get("mail_credentials").toString()}
+		</template>
+	</var-def>
+
+	<secrets-vault-get alias="${Email_Credentials.toString()}" />
+	<script><![CDATA[
+		error_message = null
+
+		Map entryMap = secureEntryMap.getWrappedObject();
+		com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO ss = entryMap.get(Email_Credentials.toString());
+		user = ss.getKey().toString();
+		password = ss.getValue().toString();
+		protocol = BIM_COMMON_CONFIGS.getWrappedObject().get("imap_protocol").toString();
+		host = BIM_COMMON_CONFIGS.getWrappedObject().get("imap_host").toString();
+		src = BIM_CONFIGS.getWrappedObject().get("bim_exclusion_inbox_name").toString();
+		valid_email_domains = BIM_CONFIGS.getWrappedObject().get("valid_email_domains").toString().split(",")
+		mail_present = false;
+	]]></script>
+	
+	<script><![CDATA[
+		import java.util.Properties;
+		import javax.mail.Folder;
+		import javax.mail.Message;
+		import javax.mail.Session;
+		import javax.mail.Store;
+		
+		// Get a Properties object
+		Properties props = System.getProperties();
+
+		// Get a Session object
+		Session session = Session.getInstance(props, null);
+
+		// Get a Store object
+		store = session.getStore(protocol);
+		store.connect(host, user, password);
+		
+		messages = []
+		
+		// Open source Folder
+		folder = store.getFolder(src);
+		if (folder == null || !folder.exists()) {
+			return;
+		}
+
+		folder.open(Folder.READ_WRITE);
+		
+		messages = folder.getMessages();//?.reverse();
+		for(def message : messages){
+			if(message.getSubject().contains(BIM_COMMON_CONFIGS.getWrappedObject().get('bim_exclusion_subject').toString())){
+				mail_present = true;
+			}
+		}
+	]]></script>
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Check If Mail Present v1.0-OTC-OM-NA-BIM-Exclusion" Task Completed.
+		</template>
+	</log>
+
+	<export include-original-data="true">
+		<single-column name="exclusion_mail_present" value="${mail_present.toString()}" />
+	</export>
+
+</config>	

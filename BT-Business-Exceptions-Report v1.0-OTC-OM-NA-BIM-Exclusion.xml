@@ -1,0 +1,385 @@
+  <?xml version="1.0" encoding="UTF-8"?>
+  <config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+      scriptlang="groovy">
+
+      <log level="INFO">
+          <template>
+              Execution of BOT "BT-Business-Exceptions-Report
+              v1.0-OTC-OM-NA-BIM-Exclusion" Task Started.
+          </template>
+      </log>
+
+      <!--
+       Steps : - 
+          BT-Business-Exceptions-Report
+              - Bot responsible to send summary of non processed line items (Invalid, Failed and Duplicate) for each mail.
+
+          Input :-
+             i. Orders with In Progress status  from DS_OTC_OM_NA_BIM_Exclusion_Report_Master datastore.
+            ii. Configuration parameters from DS_OTC_OM_NA_BIM_Exclusion_Configurations datastore.
+
+          Output :- 
+
+             i. Email is sent to requestor and everyone in CC with an excel attachment with information of each line item which was not processed.
+            ii. Updates DS_OTC_OM_NA_BIM_Exclusion_Report_Master datastore with 'Processed' status once the email is sent.
+      -->
+
+      <include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+      <var-def name="Email_Credentials">
+          <template>${BIM_CONFIGS.getWrappedObject().get("mail_credentials").toString()}
+          </template>
+      </var-def>
+      <secrets-vault-get alias="${Email_Credentials.toString()}" />
+      <script><![CDATA[
+          error_message = null
+          Map entryMap = secureEntryMap.getWrappedObject();
+          com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO ss = entryMap.get(Email_Credentials.toString());
+          mailbox_username = ss.getKey().toString();
+          mailbox_password = ss.getValue().toString();
+      ]]></script>
+
+      <!-- query for fetching data for generate report -->
+      <var-def name="reportMasterData">
+          <datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+              select
+              UUID,Email_Sender,email_cc,update_ts,Email_Subject,requested_date,requested_time from
+              @this where status = 'In Progress'
+          </datastore>
+      </var-def>
+
+      <script><![CDATA[
+          reportMasterDataList = reportMasterData.toList();
+          orders = [];
+          error_message = null;
+      ]]></script>
+
+      <try>
+          <body>
+
+              <loop item="record">
+                  <list>
+                      <script return="reportMasterData" />
+                  </list>
+                  <body>
+                      <script><![CDATA[ 
+                          uuid = record.getWrappedObject().toList().get(0)
+                          log.info("uuid : ${uuid}");
+
+                      ]]></script>
+                      <var-def name="masterData">
+                          <datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+                              select * from @this where 
+                              uuid = '${uuid}' and
+                              (status = 'Failed'
+                              or status = 'Duplicate' or status = 'Invalid')
+                              order by line_item_seq;
+                          </datastore>
+                      </var-def>
+                      <script><![CDATA[
+                          import org.apache.poi.xssf.usermodel.XSSFDataValidationConstraint;
+                          import org.apache.poi.xssf.usermodel.XSSFDataValidation;
+                          import org.apache.poi.xssf.usermodel.XSSFDataValidationHelper;
+                          import org.apache.poi.ss.util.CellRangeAddressList;
+                          import java.io.FileOutputStream;
+                          import java.io.IOException;
+                          import java.util.ArrayList;
+                          import java.util.Calendar;
+                          import java.util.Date;
+                          import java.util.List;
+                          import java.io.FileInputStream;
+                          import org.apache.poi.xssf.usermodel.XSSFSheet;
+                          import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+                          import org.apache.poi.xssf.usermodel.XSSFFont;
+                          import org.apache.poi.xssf.usermodel.XSSFCellStyle;
+                          import org.apache.poi.ss.usermodel.Cell;
+                          import org.apache.poi.ss.usermodel.Row;
+                          import org.apache.poi.ss.usermodel.Sheet;
+                          import org.apache.commons.codec.binary.Base64;
+                          import org.apache.commons.io.FileUtils;
+                          import java.text.ParseException;
+                          import java.text.SimpleDateFormat;
+                          import org.apache.poi.ss.usermodel.BorderStyle;
+                          import org.apache.poi.ss.usermodel.IndexedColors;
+                          import org.apache.poi.ss.usermodel.CellStyle;
+                          import org.apache.poi.ss.util.CellRangeAddress; 
+
+
+                          // define report name
+                          List bimFailureList = masterData.toList();
+                          //List bimFailurereportList = reportMasterData.toList();
+                          email_regex = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_email_regex").toString(); //regex to extract valid emain address.
+
+                          //for(int r=0 ;  r < bimFailurereportList.size(); r++ ){
+                              //reportMasteruiid = bimFailurereportList.get(r).getAt("UUID").toString();
+                              //email_from_raw = bimFailurereportList.get(r).getAt("Email_Sender").toString();
+                              //email_from = getEmail(email_from_raw,email_regex);
+                              email_from = record.getWrappedObject().toList().get(1).toString();
+                              String[] arrOfStr = email_from.split("<");
+                              // split Name
+                              name = arrOfStr[0];
+                              name = name.replaceAll(",", "").replaceAll('"', "");
+                              String[] arrOfStr1 = name.split(" ");
+                              if(arrOfStr1.length>1){
+                                  name = arrOfStr1[1]+" "+arrOfStr1[0];
+                              }
+                              if(arrOfStr1.length==1){
+                                  name = arrOfStr1[0];
+                              }
+                              email_from = arrOfStr[1];
+                              email_from = email_from.substring(0,email_from.length()-1);
+                              email_cc_raw = record.getWrappedObject().toList().get(2).toString();
+                              email_cc_list = []
+                              if(!(email_cc_raw.equals("") || email_cc_raw.equals("null"))){
+                                  for(String raw_text : email_cc_raw?.split('>,')){
+                                      email_cc_list.add(getEmail(raw_text,email_regex))
+                                  }
+                              }
+                              email_cc = email_cc_list.join(',');
+
+                              reportupdate_ts = record.getWrappedObject().toList().get(3).toString();
+                              subject = record.getWrappedObject().toList().get(4).toString();
+                              String new_updateDate = record.getWrappedObject().toList().get(5).toString();
+                              String new_updatetime = record.getWrappedObject().toList().get(6).toString();
+
+                              String filename = "";
+
+                              //bim_failure_report_fileName
+                              filename =  BIM_COMMON_CONFIGS.getWrappedObject().get("bim_failure_report_fileName").toString()
+                              def filePath = File.createTempFile(filename, ".xlsx");
+                              filename = filename+".xlsx";
+
+                              XSSFWorkbook workbook = new XSSFWorkbook();
+                              XSSFSheet sheet = workbook.createSheet("Business Exception");
+
+                              XSSFCellStyle titleStyle = workbook.createCellStyle();
+                              XSSFCellStyle headerStyle = workbook.createCellStyle();
+                              XSSFCellStyle cellStyle = workbook.createCellStyle();
+                              XSSFFont titleFont = workbook.createFont();
+                              XSSFFont headerFont = workbook.createFont();
+                              XSSFFont cellFont = workbook.createFont();
+                              titleFont.setBold(true);//Make font bold
+                              titleFont.setFontHeightInPoints((short) 10)
+                              titleStyle.setFont(titleFont);
+
+                              headerFont.setFontHeightInPoints((short) 10)
+                              headerFont.setBold(true);
+                              headerStyle.setFont(headerFont);
+                              headerStyle.setWrapText(true);
+                              headerStyle.setBorderTop(BorderStyle.THIN);
+                              headerStyle.setBorderBottom(BorderStyle.THIN);
+                              headerStyle.setBorderLeft(BorderStyle.THIN);
+                              headerStyle.setBorderRight(BorderStyle.THIN);
+
+                              cellFont.setFontHeightInPoints((short) 10)
+                              cellFont.setBold(false);
+                              cellStyle.setFont(cellFont);
+                              //cellStyle.setWrapText(true);
+                              cellStyle.setBorderTop(BorderStyle.THIN);
+                              cellStyle.setBorderBottom(BorderStyle.THIN);
+                              cellStyle.setBorderLeft(BorderStyle.THIN);
+                              cellStyle.setBorderRight(BorderStyle.THIN);
+
+                              // added column
+                              rowhead = sheet.createRow((short)0);
+                              rowhead.createCell(0).setCellValue("Exclusion RPA Business Failures Output Report");
+                              rowhead.getCell(0).setCellStyle(titleStyle);
+                              rowhead = sheet.createRow((short)1);
+                              rowhead.createCell(0).setCellValue("");
+
+                              sheet.setColumnWidth(0,4500);
+
+                              // Adding Header
+                              rowhead = sheet.createRow((short)2);
+                              rowhead.createCell(0).setCellValue("Date Requested");
+                              rowhead.getCell(0).setCellStyle(headerStyle);
+                              rowhead.createCell(1).setCellValue("Requester");
+                              rowhead.getCell(1).setCellStyle(headerStyle);
+                              rowhead.createCell(2).setCellValue("Time");
+                              rowhead.getCell(2).setCellStyle(headerStyle);
+                              rowhead.createCell(3).setCellValue("Subject");
+                              rowhead.getCell(3).setCellStyle(headerStyle);
+                              rowhead.createCell(4).setCellValue("Sales Org");
+                              rowhead.getCell(4).setCellStyle(headerStyle);
+                              rowhead.createCell(5).setCellValue("Dist Chl");
+                              rowhead.getCell(5).setCellStyle(headerStyle);
+                              rowhead.createCell(6).setCellValue("Customer Number");
+                              rowhead.getCell(6).setCellStyle(headerStyle);
+                              rowhead.createCell(7).setCellValue("Material Code");
+                              rowhead.getCell(7).setCellStyle(headerStyle);
+                              rowhead.createCell(8).setCellValue("Valid on/From");
+                              rowhead.getCell(8).setCellStyle(headerStyle);
+                              rowhead.createCell(9).setCellValue("Valid To");
+                              rowhead.getCell(9).setCellStyle(headerStyle);
+                              rowhead.createCell(10).setCellValue("Add/change Delete");
+                              rowhead.getCell(10).setCellStyle(headerStyle);
+                              rowhead.createCell(11).setCellValue("Key Combination");
+                              rowhead.getCell(11).setCellStyle(headerStyle);
+                              rowhead.createCell(12).setCellValue("Status");
+                              rowhead.getCell(12).setCellStyle(headerStyle);
+                              rowhead.createCell(13).setCellValue("Failure Reason");
+                              rowhead.getCell(13).setCellStyle(headerStyle);
+
+
+                              int rowNo=3;
+                              // creating row for report
+                              for (int q=0; q < bimFailureList.size(); q++) {
+                                  // getting all data from list
+
+                                  salesorg = bimFailureList.get(q).getAt("salesorg").toString();
+                                  dist_channel = bimFailureList.get(q).getAt("dist_channel").toString();
+                                  customer_number = bimFailureList.get(q).getAt("customer_number").toString();
+                                  material = bimFailureList.get(q).getAt("material").toString();
+                                  valid_from = bimFailureList.get(q).getAt("valid_from").toString();
+                                  valid_to = bimFailureList.get(q).getAt("valid_to").toString();
+                                  action = bimFailureList.get(q).getAt("action").toString();
+                                  status = bimFailureList.get(q).getAt("status").toString();
+                                  error_description = bimFailureList.get(q).getAt("error_description").toString();
+                                  update_ts = bimFailureList.get(q).getAt("update_ts").toString();
+                                  masterUiid = bimFailureList.get(q).getAt("uuid").toString();
+                                  key_combination = bimFailureList.get(q).getAt("key_combination").toString();
+
+                                  //if(reportMasteruiid.equalsIgnoreCase(masterUiid)){
+                                      // added value to particuler column
+                                      row = sheet.createRow((short)rowNo);
+                                      row.createCell(0).setCellValue(new_updateDate.toString());
+                                      //sheet.autoSizeColumn((short)0);
+                                      row.getCell(0).setCellStyle(cellStyle);
+                                      row.createCell(1).setCellValue(name.toString());
+                                      sheet.autoSizeColumn((short)1);
+                                      row.getCell(1).setCellStyle(cellStyle);
+                                      row.createCell(2).setCellValue(new_updatetime.toString());
+                                      sheet.autoSizeColumn((short)2);
+                                      row.getCell(2).setCellStyle(cellStyle);
+                                      row.createCell(3).setCellValue(subject.toString());
+                                      sheet.autoSizeColumn((short)3);
+                                      row.getCell(3).setCellStyle(cellStyle);
+                                      row.createCell(4).setCellValue(salesorg.toString());
+                                      sheet.autoSizeColumn((short)4);
+                                      row.getCell(4).setCellStyle(cellStyle);
+                                      row.createCell(5).setCellValue(dist_channel.toString());
+                                      sheet.autoSizeColumn((short)5);
+                                      row.getCell(5).setCellStyle(cellStyle);
+                                      row.createCell(6).setCellValue(customer_number.toString());
+                                      sheet.autoSizeColumn((short)6);
+                                      row.getCell(6).setCellStyle(cellStyle);
+                                      row.createCell(7).setCellValue(material.toString());
+                                      sheet.autoSizeColumn((short)7);
+                                      row.getCell(7).setCellStyle(cellStyle);
+                                      row.createCell(8).setCellValue(valid_from.toString());
+                                      sheet.autoSizeColumn((short)8);
+                                      row.getCell(8).setCellStyle(cellStyle);
+                                      row.createCell(9).setCellValue(valid_to.toString());
+                                      sheet.autoSizeColumn((short)10);
+                                      row.getCell(9).setCellStyle(cellStyle);
+                                      row.createCell(10).setCellValue(action.toString());
+                                      sheet.autoSizeColumn((short)11);
+                                      row.getCell(10).setCellStyle(cellStyle);
+                                      row.createCell(11).setCellValue(key_combination.toString());
+                                      sheet.autoSizeColumn((short)11);
+                                      row.getCell(11).setCellStyle(cellStyle);
+                                      row.createCell(12).setCellValue(status.toString());
+                                      sheet.autoSizeColumn((short)12);
+                                      row.getCell(12).setCellStyle(cellStyle);
+                                      row.createCell(13).setCellValue(error_description.toString());
+                                      sheet.autoSizeColumn((short)13);
+                                      row.getCell(13).setCellStyle(cellStyle);
+
+                                      rowNo++;
+
+                                  //}
+                              }
+
+                              if(rowNo>3){
+                                  log.warn("File path"+filePath);
+                                  log.warn("File name"+filename);
+                                  sheet.addMergedRegion(new CellRangeAddress(0,0,0,13));  
+                                  FileOutputStream fileOut = new FileOutputStream(filePath);
+
+                                  workbook.write(fileOut);
+                                  fileOut.close();
+                                  workbook.close();
+                                  // file has been closed
+                                  log.info("Closed excel ***");
+                                  orders.add([order_file_path: filePath,  orderfilename : filename , mailTo : email_from , mailToCc : email_cc , mailsub : subject ])
+                              }
+                          //}
+                          log.info("orders : ${orders}");
+                          sys.defineVariable("order_list", orders)
+
+                          //Function to extract valid email address using regex.
+                          def getEmail(String rawText,String regex){
+                              try{
+                                  def matcher = (rawText =~ regex)
+                                  String email = matcher[0][0]
+                                  return email;
+                              }catch(IndexOutOfBoundsException){
+                                  error_sending_email = true;
+                                  log.warn("Invalid email found.");
+                                  return "";
+                              }
+                          }
+
+                      ]]></script>
+                      <datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+                          update @this set status = 'Processed'
+                          WHERE UUID = '${uuid}'
+                      </datastore>
+                  </body>
+              </loop>	
+
+              <loop item="bimorderData">
+                  <list>
+                      <var name="order_list" />
+                  </list>
+                  <body>
+                      <script><![CDATA[
+                          def orderItem = bimorderData.getWrappedObject()
+                          order_file_path = orderItem.order_file_path.toString()
+                          order_file_name = orderItem.orderfilename.toString()
+                          mail_subject = "RE: " + orderItem.mailsub.toString().replaceFirst("RE: ","").replaceFirst("FW: ","")
+                          recipient_To = orderItem.mailTo.toString()
+                          recipient_Cc = orderItem.mailToCc.toString()
+
+                          recipient_From = BIM_CONFIGS.getWrappedObject().get("recipient_from").toString()
+                          def mail_body = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_failure_report_body").toString()
+                          BIM_Template_MAIL_BODY = new String(Base64.getDecoder().decode(mail_body))
+                      ]]></script>
+                      <mail
+                          smtp-host="${BIM_COMMON_CONFIGS.getWrappedObject().get('smtp_host').toString()}"
+                          smtp-port="${BIM_COMMON_CONFIGS.getWrappedObject().get('smtp_port').toString()}"
+                          type="html" to="${recipient_To.toString()}" from="${recipient_From.toString()}"
+                          cc="${recipient_Cc.toString()}"
+                          subject="${mail_subject.toString()}" password="${mailbox_password.toString()}"
+                          username="${mailbox_username.toString()}"
+                          security="${BIM_COMMON_CONFIGS.getWrappedObject().get('security').toString()}">
+                          <template>
+                              ${BIM_Template_MAIL_BODY.toString()}
+                          </template>
+                          <mail-attach name="${order_file_name.toString()}"
+                              mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+                              <file path="${order_file_path.toString()}" type="binary" />
+                          </mail-attach>
+                      </mail>
+
+                  </body>
+              </loop>
+
+          </body>
+          <catch>
+              <script><![CDATA[
+                  error_message = _exception_message.getWrappedObject().toString();
+                  log.warn("Error while sending email- "+ error_message);
+              ]]></script>
+          </catch>
+      </try>
+      <log level="INFO">
+          <template>
+              Execution of BOT
+              "BT-Business-Exceptions-Report
+              v1.0-OTC-OM-NA-BIM-Exclusion" Task Ended.
+          </template>
+      </log>
+      <export include-original-data="true">
+          <single-column name="error_message" value="${error_message}" />
+      </export>
+  </config>

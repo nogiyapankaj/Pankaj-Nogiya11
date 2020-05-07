@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+	
+	
+	<!--
+	 Steps : - 
+		BT-Email To User-Rejected Mails
+			- Bot responsible to send email notification to users in case the mail is not as per predefined format.
+			- Rejections in scope to send email -> Missing attachment, Invalid attachment and Multiple attachment.
+			- Rejection not in scope to send email -> Invalid Domain. For Invalid Domain rejection, no email is sent. The rejection reason is saved for audit purposes.
+		
+		Input :-
+		   i. To be Rejected Mail information from DS_OTC_OM_NA_BIM_Exclusion_Report_Master datastore.
+		  ii. Configuration parameters from DS_OTC_OM_NA_BIM_Exclusion_Configurations datastore.
+		   
+		Output :- 
+		
+		   i. Email notification will be sent to Requestor and all in CC incase of Rejection.
+		  ii. Updates DS_OTC_OM_NA_BIM_Exclusion_Report_Master datastore with 'Rejected' status.
+	-->
+	
+	<include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+	
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Email To User-Rejected Mails" Task Started.
+		</template>
+	</log>	
+	
+	<!-- Importing constants from configuration file -->
+	
+	<script><![CDATA[ 
+		email_credentials = BIM_CONFIGS.getWrappedObject().get("mail_credentials").toString(); //secret vault alias name to fetch email credentials
+		recipient_from = BIM_CONFIGS.getWrappedObject().get("recipient_from").toString(); //From email address to send email
+		email_regex = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_email_regex").toString(); //regex to extract valid emain address.
+		
+		//Rejection reasons
+		bim_missing_attachment_reason = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_no_attachment_reason").toString();
+		bim_multiple_attachment_reason = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_multiple_attachment_reason").toString();
+		bim_invalid_attachment_reason = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_invalid_attachment_reason").toString();
+		bim_invalid_domain_reason = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_invalid_domain_reason").toString();
+		
+		
+		//Email templates for each use case.
+		bim_template_body_for_missing_attachment = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_template_body_for_missing_attachment").toString();
+		bim_template_body_for_multiple_attachment = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_template_body_for_multiple_attachment").toString();
+		bim_template_body_for_invalid_attachment = BIM_COMMON_CONFIGS.getWrappedObject().get("bim_template_body_for_invalid_attachment").toString();
+		
+		//Email Parameters
+		smtp_host = BIM_COMMON_CONFIGS.getWrappedObject().get('smtp_host').toString()
+		smtp_port = BIM_COMMON_CONFIGS.getWrappedObject().get('smtp_port').toString()
+		security = BIM_COMMON_CONFIGS.getWrappedObject().get('security').toString()
+	]]></script>
+
+	
+	<secrets-vault-get alias="${email_credentials.toString()}" />
+	<script><![CDATA[
+		error_message = ""
+		Map entryMap = secureEntryMap.getWrappedObject();
+		com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO ss = entryMap.get(email_credentials.toString());
+		mailbox_username = ss.getKey().toString();
+		mailbox_password = ss.getValue().toString();
+	]]></script>
+
+	
+	<var-def name="rejected_mail_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+			SELECT uuid,email_sender,email_cc,email_subject,attachment_name,rejection_reason from @this where
+			status = 'To Be Rejected' and not rejection_reason = '${bim_invalid_domain_reason}';
+		</datastore>
+	</var-def>
+	
+	
+	
+	<loop item="rejected_mail_item">
+		<list>
+			<var name="rejected_mail_list"/>
+		</list>
+		<body>
+			<script><![CDATA[  
+				error_sending_email = false;
+				mail_uuid = rejected_mail_item.getAt("uuid").toString();
+				email_subject = "RE: " + rejected_mail_item.getAt("email_subject").toString().replaceFirst("RE: ","").replaceFirst("FW: ","");
+				recipient_to_raw = rejected_mail_item.getAt("email_sender").toString();
+				recipient_to = getEmail(recipient_to_raw,email_regex);
+				recipient_cc_raw = rejected_mail_item.getAt("email_cc").toString();
+				recipient_cc_list = []
+				if(!(recipient_cc_raw.equals("") || recipient_cc_raw.equals("null"))){
+					for(String raw_text : recipient_cc_raw?.split('>,')){
+						recipient_cc_list.add(getEmail(raw_text,email_regex))
+					}
+				}
+				recipient_cc = recipient_cc_list.join(',');
+				rejection_reason = rejected_mail_item.getAt("rejection_reason").toString();
+				mail_body = ""
+				switch(rejection_reason){
+					case bim_missing_attachment_reason :
+							mail_body = bim_template_body_for_missing_attachment;
+							break;
+					case bim_multiple_attachment_reason :
+							mail_body = bim_template_body_for_multiple_attachment;
+							break;
+					case bim_invalid_attachment_reason :
+							mail_body = bim_template_body_for_invalid_attachment;
+							break;
+					default:
+							error_sending_email = true;
+							log.warn("Invalid Reason Code found.");		
+							
+				}
+				
+				BIM_Template_MAIL_BODY = new String(Base64.getDecoder().decode(mail_body))
+				
+				//Function to extract valid email address using regex.
+				def getEmail(String rawText,String regex){
+					try{
+						def matcher = (rawText =~ regex)
+						String email = matcher[0][0]
+						return email;
+					}catch(IndexOutOfBoundsException){
+						error_sending_email = true;
+						log.warn("Invalid email found.");
+						return "";
+					}
+				}
+				
+				log.warn("error_sending_email : ${error_sending_email}");
+			]]></script>
+			<case>
+				<if condition = '${error_sending_email == false}'>
+					<try>
+						<body>
+							<mail smtp-host="${smtp_host}"
+								smtp-port="${smtp_port}"
+								type="html" to="${recipient_to.toString()}" from="${recipient_from.toString()}"
+								cc="${recipient_cc.toString()}" subject="${email_subject.toString()}"
+								username="${mailbox_username.toString()}" password="${mailbox_password.toString()}"
+								security="${security}">
+								<template>
+									${BIM_Template_MAIL_BODY}
+								</template>
+							</mail>
+						</body>
+						<catch>
+							<script><![CDATA[  
+								error_message = _exception_message.getWrappedObject().toString();
+								log.warn("Exception while sending rejection mail - "+ error_message);
+							]]></script>
+						</catch>
+					</try>	
+				</if>
+				<else>
+					<script><![CDATA[  
+						error_message = "Rejection Mail could not be sent. Check to/cc email address."
+						log.warn("Exception while sending rejection mail - "+ error_message);
+					]]></script>
+				</else>
+			</case>
+			
+			<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+				UPDATE @this SET
+				status='Rejected'
+				where
+				uuid='${mail_uuid}'
+			</datastore>
+			
+		</body>
+	</loop>
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Email To User-Rejected Mails" Task Completed.
+		</template>
+	</log>	
+    <export include-original-data="true">
+		<single-column name="error_message" value="${error_message}" />
+	</export>
+
+</config>

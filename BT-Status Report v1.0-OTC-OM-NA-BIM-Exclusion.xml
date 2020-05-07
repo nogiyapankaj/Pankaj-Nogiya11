@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Status Report
+			v1.0-OTC-OM-NA-BIM-Exclusion" Task
+			Started.
+		</template>
+	</log>
+	<include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+	<include-config code="BT-APP Utils v1.0-OTC-OM-NA-BIM-Exclusion" />
+	<include-config code="BT-SAP Utils v1.0-OTC-OM-NA-BIM-Exclusion" />
+
+
+	<!-- ship-to -->
+	<var-def name="ds_bim_exclusion_shipto_total">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Ship-To Customer'
+		</datastore>
+	</var-def>
+	<var-def name="ds_bim_exclusion_shipto_add_fail_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Ship-To Customer'
+			and action = 'Add/Change' and status = 'Failed'
+		</datastore>
+	</var-def>
+	<var-def name="ds_bim_exclusion_shipto_add_success_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Ship-To Customer'
+			and action = 'Add/Change' and status = 'Success'
+		</datastore>
+	</var-def>
+	<var-def name="ds_bim_exclusion_shipto_delete_fail_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Ship-To Customer'
+			and action = 'Delete' and status = 'Failed'
+		</datastore>
+	</var-def>
+
+	<var-def name="ds_bim_exclusion_shipto_delete_success_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Ship-To Customer'
+			and action = 'Delete' and status = 'Success'
+		</datastore>
+	</var-def>
+
+	<!-- sold-to -->
+
+	<var-def name="ds_bim_exclusion_soldto_total">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Ship-To Customer'
+		</datastore>
+	</var-def>
+	<var-def name="ds_bim_exclusion_soldto_add_fail_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Sold-To Customer'
+			and action = 'Add/Change' and status = 'Failed'
+		</datastore>
+	</var-def>
+	<var-def name="ds_bim_exclusion_soldto_add_success_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Sold-To Customer'
+			and action = 'Add/Change' and status = 'Success'
+		</datastore>
+	</var-def>
+
+	<var-def name="ds_bim_exclusion_soldto_delete_fail_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Sold-To Customer'
+			and action = 'Delete' and status = 'Failed'
+		</datastore>
+	</var-def>
+
+	<var-def name="ds_bim_exclusion_soldto_delete_success_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Sold-To Customer'
+			and action = 'Delete' and status = 'Success'
+		</datastore>
+	</var-def>
+	<script><![CDATA[
+		//shipto
+		shipto_totalCount = ds_bim_exclusion_shipto_total.toList().size()
+
+		//shipto Add
+		shipto_addtotal = ds_bim_exclusion_shipto_add_fail_list.toList().size()+ds_bim_exclusion_shipto_add_success_list.toList().size()
+		shipto_add_fail_count =  ds_bim_exclusion_shipto_add_fail_list.toList().size();
+		shipto_add_success_count =  ds_bim_exclusion_shipto_add_success_list.toList().size();
+		//shipto delete
+		shipto_deletetotal = ds_bim_exclusion_shipto_delete_fail_list.toList().size()+ds_bim_exclusion_shipto_delete_success_list.toList().size()
+		shipto_delete_fail_count =  ds_bim_exclusion_shipto_delete_fail_list.toList().size();
+		shipto_delete_success_count =  ds_bim_exclusion_shipto_delete_success_list.toList().size();
+
+		//soldto
+		soldto_totalCount = ds_bim_exclusion_soldto_total.toList().size()
+		//soldto Add
+		soldto_addtotal = ds_bim_exclusion_soldto_add_fail_list.toList().size()+ds_bim_exclusion_soldto_add_success_list.toList().size()
+		soldto_add_fail_count =  ds_bim_exclusion_soldto_add_fail_list.toList().size();
+		soldto_add_success_count =  ds_bim_exclusion_soldto_add_success_list.toList().size();
+		//soldto delete
+		soldto_deletetotal = ds_bim_exclusion_soldto_delete_fail_list.toList().size()+ds_bim_exclusion_soldto_delete_success_list.toList().size()
+		soldto_delete_fail_count =  ds_bim_exclusion_soldto_delete_fail_list.toList().size();
+		soldto_delete_success_count =  ds_bim_exclusion_soldto_delete_success_list.toList().size();
+
+
+		
+		//shipto
+		sys.defineVariable("shipto_totalCount", shipto_totalCount)
+		sys.defineVariable("shipto_addtotal", shipto_addtotal)
+		sys.defineVariable("shipto_add_fail_count", shipto_add_fail_count)
+		sys.defineVariable("shipto_add_success_count", shipto_add_success_count)
+		sys.defineVariable("shipto_deletetotal", shipto_deletetotal)
+		sys.defineVariable("shipto_delete_fail_count", shipto_delete_fail_count)
+		sys.defineVariable("shipto_delete_success_count", shipto_delete_success_count)
+
+		//soldto
+		sys.defineVariable("soldto_totalCount", soldto_totalCount)
+		sys.defineVariable("soldto_addtotal", soldto_addtotal)
+		sys.defineVariable("soldto_add_fail_count", soldto_add_fail_count)
+		sys.defineVariable("soldto_add_success_count", soldto_add_success_count)
+		sys.defineVariable("soldto_deletetotal", soldto_deletetotal)
+		sys.defineVariable("soldto_delete_fail_count", soldto_delete_fail_count)
+		sys.defineVariable("soldto_delete_success_count", soldto_delete_success_count)
+	]]></script>
+	
+	<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+		update @this set total_count
+		='${soldto_totalCount}' , add_count =
+		'${soldto_addtotal}',
+		delete_count ='${soldto_deletetotal}',SAP_Add_Success_Count='${soldto_add_success_count}', 
+		SAP_Add_Failed_Count='${soldto_add_fail_count}',
+		SAP_Delete_Success_Count='${soldto_delete_success_count}',
+		SAP_Delete_Failed_Count='${soldto_delete_fail_count}', Status = 'Completed',
+		update_ts = '${nowDateTime()}'
+		WHERE key_combination ='Sold-To Customer'
+	</datastore>
+	
+	
+	
+	
+	
+	<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+		update @this set total_count
+		='${shipto_totalCount}' , add_count =
+		'${shipto_addtotal}',
+		delete_count ='${shipto_deletetotal}',SAP_Add_Success_Count='${shipto_add_success_count}', 
+		SAP_Add_Failed_Count='${shipto_add_fail_count}',
+		SAP_Delete_Success_Count='${shipto_delete_success_count}',
+		SAP_Delete_Failed_Count='${shipto_delete_fail_count}', Status = 'Completed',
+		update_ts = '${nowDateTime()}'
+		WHERE key_combination ='Ship-To Customer'
+	</datastore>
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Status Report
+			v1.0-OTC-OM-NA-BIM-Exclusion" Task
+			Started.
+		</template>
+	</log>
+
+	<export include-original-data="true"></export>
+
+</config>

@@ -1,0 +1,716 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+	
+	<!--
+	 Steps : - 
+		BT-Read Emails v1.0-OTC-OM-NA-BIM-Exclusion 
+			- Reads Exclusion emails from configured mailbox Inbox one at a time.
+			- Rejects the email if not as per the aligned format.
+			- Reads the excel attachment in the email.
+			- Validates and removes duplicates in excel attachment.
+			- Stores email and line item information to respective datastores.
+		
+		Input :-
+		   i. Emails from BIM Exclusion Mailbox.
+		  ii. Configuration parameters from DS_OTC_OM_NA_BIM_Exclusion_Configurations datastore.
+		   
+		Output :- 
+		
+		   i. Adds email information to DS_OTC_OM_NA_BIM_Exclusion_Report_Master datastore
+		  ii. Adds line item information to DS_OTC_OM_NA_BIM_Exclusion_Data_Master datastore
+	-->
+
+	
+	<include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+	<include-config code="BT-APP Utils v1.0-OTC-OM-NA-BIM-Exclusion" />
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Read Emails v1.0-OTC-OM-NA-BIM-Exclusion" Task Started.
+		</template>
+	</log>	
+	
+	<var-def name="Email_Credentials">
+		<template>${BIM_CONFIGS.getWrappedObject().get("mail_credentials").toString()}
+		</template>
+	</var-def>
+
+	<secrets-vault-get alias="${Email_Credentials.toString()}" />
+	<script><![CDATA[
+		error_message = null
+
+		Map entryMap = secureEntryMap.getWrappedObject();
+		com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO ss = entryMap.get(Email_Credentials.toString());
+		user = ss.getKey().toString();
+		password = ss.getValue().toString();
+		
+		protocol = BIM_CONFIGS.getWrappedObject().get("imap_protocol").toString();
+		host = BIM_CONFIGS.getWrappedObject().get("imap_host").toString();
+		src = BIM_CONFIGS.getWrappedObject().get("bim_exclusion_inbox_name").toString();
+		processedMailDestination = BIM_CONFIGS.getWrappedObject().get("bim_exclusion_destination_folder_name").toString();
+		invalidMailDestination = BIM_CONFIGS.getWrappedObject().get("bim_exclusion_invalid_domain_folder_name").toString();
+		valid_email_domains = BIM_CONFIGS.getWrappedObject().get("valid_email_domains").toString().split(",")
+		try{
+			run_id = run_id.toString();
+		}catch(MissingPropertyException e){
+			run_id = UUID.randomUUID();
+		}
+		
+	]]></script>
+
+	<try>
+		<body>
+			<script><![CDATA[
+				import java.util.ArrayList;
+				import java.util.List;
+				import java.util.Properties;
+				import javax.mail.Flags;
+				import javax.mail.Flags.Flag;
+				import javax.mail.Folder;
+				import javax.mail.Message;
+				import javax.mail.Multipart;
+				import javax.mail.Part;
+				import javax.mail.Session;
+				import javax.mail.Store;
+				import javax.mail.internet.MimeBodyPart;
+				import javax.mail.search.SubjectTerm;
+				import java.text.DateFormat;
+				import java.text.SimpleDateFormat;
+				import java.util.TimeZone;
+
+				formatter = new SimpleDateFormat("MM-dd-yyyy HH:mm:ss");
+				timeZone = TimeZone.getTimeZone("America/New_York");
+				formatter.setTimeZone(timeZone);
+				
+				try{
+					run_date_time = run_date_time.toString();
+				}catch(MissingPropertyException e){
+					run_date_time = formatter.format(new Date());
+				}
+				
+
+				// Get a Properties object
+				Properties props = System.getProperties();
+
+				// Get a Session object
+				Session session = Session.getInstance(props, null);
+
+				// Get a Store object
+				store = session.getStore(protocol);
+				store.connect(host, user, password);
+				
+				messages = []
+				exclusion_messages = []
+
+				// Open source Folder
+				folder = store.getFolder(src);
+				if (folder == null || !folder.exists()) {
+					return;
+				}
+
+				folder.open(Folder.READ_WRITE);
+
+				int count = folder.getMessageCount();
+				if (count == 0) { // No messages in the source folder
+					log.info("Folder " + folder.getName() + " is empty");
+					return;
+				}
+
+				// Open destination folder, create if reqd
+				processedMailsdestfolder = store.getFolder(processedMailDestination);
+				if (!processedMailsdestfolder.exists()){
+					processedMailsdestfolder.create(Folder.HOLDS_MESSAGES);
+				}
+				
+				invalidMailsdestfolder = store.getFolder(invalidMailDestination);
+				if (!invalidMailsdestfolder.exists()){
+					invalidMailsdestfolder.create(Folder.HOLDS_MESSAGES);
+				}
+				// Get the message objects mapped to subject
+				//Reversed so as to implement first in first out while reading mails.
+				messages = folder.getMessages()?.reverse();
+				for(def message : messages){
+					if(message.getSubject().contains(BIM_CONFIGS.getWrappedObject().get('bim_exclusion_subject').toString())){
+						exclusion_messages.add(message);
+					}
+				}
+				
+				
+			]]></script>
+			
+			<case>
+			<if condition="${exclusion_messages.size()>0}">
+			<script><![CDATA[
+				import java.util.UUID;
+				import java.util.ArrayList;
+				import java.util.List;
+				import java.util.Properties;
+				import javax.mail.Flags.Flag;
+				import javax.mail.Flags;
+				import javax.mail.Folder;
+				import javax.mail.Message;
+				import javax.mail.Multipart;
+				import javax.mail.Part;
+				import javax.mail.Session;
+				import javax.mail.Store;
+				import javax.mail.internet.MimeBodyPart;
+				import javax.mail.search.SubjectTerm;
+				import javax.mail.internet.InternetAddress;
+				import groovy.json.JsonSlurper
+				import com.google.gson.GsonBuilder
+				import java.util.logging.FileHandler;
+				import org.apache.poi.ss.usermodel.DateUtil;
+				import org.apache.poi.ss.usermodel.DataFormatter
+				import org.apache.poi.ss.format.CellFormat
+				import org.apache.poi.ss.format.CellFormatResult
+				import com.google.gson.Gson
+				import org.apache.poi.ss.usermodel.Cell;
+				import org.apache.poi.ss.usermodel.Workbook;
+				import org.apache.poi.ss.usermodel.WorkbookFactory;
+				import org.apache.poi.ss.usermodel.FormulaEvaluator;
+				import org.apache.poi.ss.usermodel.Row;
+				import org.apache.poi.ss.usermodel.Sheet;
+				import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+				import org.apache.poi.xssf.usermodel.XSSFSheet;
+				import java.text.DateFormat;
+				import java.text.SimpleDateFormat;
+				
+				
+				boolean keyCombinationLabelValidation=false;
+				boolean keyCombinationValueValidation=false;
+				boolean tableHeaderNameValidation=false;
+				
+				SimpleDateFormat estFormat = new SimpleDateFormat("MM/dd/yyyy hh:mm:ss");
+				DateFormat dateFormat = new SimpleDateFormat("MM/dd/yy");
+				DateFormat timeFormat = new SimpleDateFormat("hh:mm:ss");
+				dateFormat.setTimeZone(timeZone);
+				timeFormat.setTimeZone(timeZone);
+
+				message = exclusion_messages.get(0);
+				message.setFlag(Flag.SEEN, true);
+				mail_uuid = UUID.randomUUID();
+				requested_date = dateFormat.format(message.getReceivedDate())
+				requested_time = timeFormat.format(message.getReceivedDate())
+				from =  InternetAddress.toString(message.getFrom())
+				domain = from.substring(from.indexOf("@")+1).replaceAll(">","");
+				is_valid_domain = valid_email_domains.contains(domain.toLowerCase());
+				cc = InternetAddress.toString(message.getRecipients(Message.RecipientType.CC));
+				subject = message.getSubject()
+				attachedExcelFileName = "";
+				downloadedFilePath = null;
+				technical_exception = [:]
+				rejection_reason = "";
+				String contentType = message.getContentType();
+				if(!is_valid_domain){
+					rejection_reason = "Domain Not Supported"
+					attachedExcelFileName = "Domain Not Supported";
+				}else if(!contentType.contains("multipart")){
+					rejection_reason = "No Attachment"
+					attachedExcelFileName = "No Attachment";
+				}	
+				// suppose 'message' is an object of type Message
+				
+
+				if (is_valid_domain && contentType.contains("multipart")) {
+					// this message may contain attachment
+					Multipart multiPart = (Multipart) message.getContent();
+					int attachment_count = 0;
+					for (int i = 0; i < multiPart.getCount(); ++i) {
+						MimeBodyPart part = (MimeBodyPart) multiPart.getBodyPart(i);
+						if (Part.ATTACHMENT.equalsIgnoreCase(part.getDisposition()))
+							++attachment_count;
+					}
+					//Process the mail only if it has one attachment.
+					
+					if(attachment_count==1){
+						for (int i = 0; i < multiPart.getCount(); i++) {
+							MimeBodyPart part = (MimeBodyPart) multiPart.getBodyPart(i);
+							log.warn("part.getFileName() - " + part.getFileName());
+							log.warn("part.getDisposition() - " + part.getDisposition());
+
+
+							if ((Part.ATTACHMENT.equalsIgnoreCase(part.getDisposition()) || Part.INLINE.equalsIgnoreCase(part.getDisposition())) && part.getFileName() != null) {
+								// this part is attachment
+								// code to save attachment...
+								// save an attachment from a MimeBodyPart to a file
+								String attachedFileName =  part.getFileName();
+								String tempFolderPath = System.getProperty("java.io.tmpdir");
+								String destFilePath = tempFolderPath +  attachedFileName;
+
+								if( attachedFileName != null &&  attachedFileName.endsWith(".xlsx")) {
+									part.saveFile(destFilePath);
+									downloadedFilePath = destFilePath;
+									attachedExcelFileName = attachedFileName
+								}else{
+									log.warn("Attachment expected in .xlsx format. Invalid attachment found")
+									rejection_reason = "Invalid Attachment"	
+									attachedExcelFileName = attachedFileName;
+								}
+							}
+						}
+					}else{
+						if(attachment_count==0){
+							log.warn("No attachment found in email. Mail would not be processed");
+							rejection_reason = "No Attachment"	
+							attachedExcelFileName = "No Attachment";
+						}else{									
+							log.warn("More than 1 attachment found in the email. Mail would not be processed");
+							rejection_reason = "Multiple Attachments Found"
+							for (int i = 0; i < multiPart.getCount(); i++) {
+								MimeBodyPart part = (MimeBodyPart) multiPart.getBodyPart(i);
+
+								if ((Part.ATTACHMENT.equalsIgnoreCase(part.getDisposition()) || Part.INLINE.equalsIgnoreCase(part.getDisposition())) && part.getFileName() != null) {
+									String attachedFileName =  part.getFileName();
+									if(attachedExcelFileName.equals(""))
+										attachedExcelFileName = attachedFileName;
+									else
+										attachedExcelFileName += ","+attachedFileName;
+										
+								}
+							}
+							
+						}
+					}
+				}else{
+					log.warn("Invalid domain or mail without attachment")
+				}
+
+				
+
+				//Process excel sheet contents
+				downloadedFileName = null
+				new_orders =[]
+
+				if(downloadedFilePath != null){
+					downloadedFileName = downloadedFilePath.substring(downloadedFilePath.lastIndexOf("\\")+1)
+
+					sys.defineVariable("downloadedFileName", downloadedFileName)
+					sys.defineVariable("downloadedFilePath", downloadedFilePath)
+
+					File downloadedFile = new File(downloadedFilePath)
+
+
+					// Get the workbook instance from a template
+					FileInputStream fin = new FileInputStream(downloadedFile);
+					workbook = new XSSFWorkbook(fin);
+
+					// get the specific spreadsheet
+					XSSFSheet sheet =workbook.getSheetAt(0); //workbook.getSheet(sheetName);
+
+					def first_column_name = "Sales Org";
+					def isValidResponse = true;
+
+					def header = new ArrayList()
+					def excelRows = new LinkedList()
+
+
+					FormulaEvaluator evaluator = workbook.getCreationHelper().createFormulaEvaluator();
+					DataFormatter formatter = new DataFormatter();
+					CellFormat dateCF = CellFormat.getInstance("MM/dd/yyyy");
+
+
+					// Get the default formatted cell value.
+					// Returns "" if cell is null.
+
+					def getEvCellValue
+					getEvCellValue = { cell ->
+						def type = cell?.getCellType()
+						if(type == Cell.CELL_TYPE_FORMULA){
+							evaluator.evaluateInCell(cell)
+							return getEvCellValue(cell)
+						} else if(type == Cell.CELL_TYPE_ERROR || type == Cell.CELL_TYPE_NUMERIC || type == Cell.CELL_TYPE_STRING || type == Cell.CELL_TYPE_BOOLEAN){
+
+							if (type == Cell.CELL_TYPE_NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+								return dateCF.apply(cell).text;
+							}
+							return formatter.formatCellValue(cell)
+						}
+						else{
+							return ""
+						}
+					}
+
+					//String columns2Read[] = {"qty","uom","material","description","sales_order_#","ship_from","order_date","lead_time_gi","current_gi","req_gi","approved_gi_date","exception_determination"};
+
+
+					ArrayList<String> supportedColumns = new ArrayList<String>()
+					supportedColumns.add("sales_org")
+					supportedColumns.add("dist_chl")
+					supportedColumns.add("customer_number")
+					supportedColumns.add("material_code")
+					supportedColumns.add("valid_on_from_mm_dd_yyyy")
+					supportedColumns.add("valid_to_mm_dd_yyyy")
+					supportedColumns.add("add_change_or_delete")
+
+
+
+					def headerFound = false;
+					def headerIdx = -1;
+
+					key_combination="";
+					//int validation2_idx=0;
+					int row_count=0;
+					String header_names="";
+					def file_validation = true
+					// Read sheet by row.
+					for (Row row : sheet){
+						row_count++;
+						def valueFound= false;
+
+						def rowValues = [:]
+						if(!file_validation)
+							break;
+						row.each{ cell ->
+							def cellValue = getEvCellValue(cell);
+							def i = cell.getColumnIndex()
+							if(row_count==2){
+								if(i==0)
+									keyCombinationLabelValidation=cellValue.toString().trim().contains("Key Combination");
+								else if(i==1){
+									keyCombinationValueValidation=cellValue.toString().trim().equals("Ship-To Customer")||cellValue.contains("Sold-To Customer");
+									if(keyCombinationValueValidation)
+										key_combination=""+cellValue;
+								}
+							}
+
+							if(row_count==3){
+								header_names=header_names+""+cellValue.toString().trim().replaceAll("\n", " ").trim();
+							}
+							if(row_count>3){
+								tableHeaderNameValidation=header_names.equals("Sales OrgDist ChlCustomer NumberMaterial CodeValid on/From MM/DD/YYYYValid To MM/DD/YYYYAdd/Change or Delete");
+								if(!keyCombinationLabelValidation || !keyCombinationValueValidation || !tableHeaderNameValidation){
+									log.info("keyCombinationLabelValidation:"+keyCombinationLabelValidation+",keyCombinationValueValidation:"+keyCombinationValueValidation+",tableHeaderNameValidation:"+tableHeaderNameValidation);
+									rejection_reason = "Invalid Attachment"
+									file_validation = false
+								}
+								else{
+									file_validation=true;
+								}
+							}
+							if (!headerFound && first_column_name.toString().equals(cellValue?.toString())) { // Header found
+								headerFound = true;
+								headerIdx = row.getRowNum();
+							}
+							
+							if (file_validation && headerFound) {
+								if (row.getRowNum()==headerIdx) { // Store header
+
+									String headerName = cellValue.trim().replaceAll("[\\.\\/\\s-']","_").toLowerCase()
+									if(headerName != null && !headerName.equals("") && supportedColumns.contains(headerName)){
+										header[i] = headerName
+									}else{
+										log.info("headerName - " + headerName + " is not supported");
+									}
+
+								} else {
+
+									if(header[i] != null && header[i].trim() != ""){
+										rowValues.put("key_combination", key_combination)
+										if(header[i].equals("sales_org")){
+											rowValues.put("salesorg", cellValue)
+										}else if(header[i].equals("dist_chl")){
+											if(cellValue?.equals("1"))
+												cellValue = "0" + cellValue
+											rowValues.put("dist_channel", cellValue)
+										}else if(header[i].equals("customer_number")){
+											rowValues.put("customer_number", cellValue)
+										}else if(header[i].equals("material_code")){
+											rowValues.put("material", cellValue)
+										}else if(header[i].equals("valid_on_from_mm_dd_yyyy")){
+											rowValues.put("valid_from", cellValue)
+										}else if(header[i].equals("valid_to_mm_dd_yyyy")){
+											rowValues.put("valid_to", cellValue)
+										}else if(header[i].equals("add_change_or_delete")){
+											rowValues.put("action", cellValue)
+										}else{
+											rowValues.put(""+header[i], cellValue)
+										}
+										rowValues.put("error_description","")
+										//Flag to keep track of exclusion summary generation in the end of processing.
+										
+										if(cellValue != null && cellValue.trim() != ""){
+											valueFound= true;
+										}
+									}
+								}
+							}
+						}
+
+						if (file_validation && headerFound && row.getRowNum()>headerIdx && !rowValues.isEmpty() && valueFound == true) {
+							excelRows.add(rowValues);
+							
+						}
+					}
+
+					def getColumnHeaderName = {
+						switch(it){
+							case "salesorg" : return "Sales Org"
+							case "dist_channel" : return "Dist Chl"
+							case "customer_number" : return "Customer Number"
+							case "material" : return "Material Code"
+							case "valid_from" : return "Valid on/From"
+							case "valid_to" : return "Valid To"
+							case "action" : return "Add/change Delete"
+
+						}
+					}
+
+					def df = new SimpleDateFormat("MM/dd/yyyy")
+					def is_date = {
+						try{
+							df.parse(it)
+						} catch (Exception e) {
+							return false
+						}
+					}
+
+					def is_not_empty = {  it != null && it.size() > 0  }
+					
+					def dist_channel_validation = { it !=null && (it == "01" || it == "1")}
+
+					def validations_add = [
+						"salesorg": is_not_empty,
+						"dist_channel": dist_channel_validation,
+						"customer_number": is_not_empty,
+						"material": is_not_empty,
+						"valid_from": { is_date(it) && is_not_empty  },
+						"valid_to": { is_date(it) && is_not_empty  },
+						"action": is_not_empty
+					]
+					
+					def validations_delete = [
+						"salesorg": is_not_empty,
+						"dist_channel": dist_channel_validation,
+						"customer_number": is_not_empty,
+						"material": is_not_empty,
+						"valid_from": { is_date(it) && is_not_empty  },
+						"action": is_not_empty
+					]
+
+
+					technical_exception.put("code", "001")
+
+
+					
+
+					
+					// Apply validation on each order row
+
+					for (order in excelRows) {
+
+						def invalid_data = false
+						//String uniqueKey = String.join("-",order.get("salesorg"),order.get("dist_channel"),order.get("customer_number"),order.get("material"));
+
+						String uniqueKey = String.join("-",order.get("salesorg"),order.get("dist_channel"),order.get("customer_number"),order.get("material"),order.get("valid_from"),order.get("valid_to"),order.get("action"));
+
+						order.put("unique_key", uniqueKey)
+						order.put("uuid", mail_uuid)
+						order.put("update_ts",nowDateTime())
+						
+						String status = order.get("status")
+						if(status == null || status.isEmpty()  ){
+
+							// Column value validation
+							String action = order.get("action")
+							if(!(action == null || action.isEmpty() || !(action.toLowerCase().equals('delete') || action.toLowerCase().equals('add/change')))){
+								validations = (action.toLowerCase().equals("delete"))?validations_delete:validations_add
+								for (entry in validations) {
+									if (entry.value.call(order.get(entry.key)) == false) {
+										technical_exception.put("exception_message", "Invalid value ${order.get(entry.key)} for order column: ${entry.key}")
+										technical_exception.put("details", order.toMapString())
+										String error_message = ""
+										if(order.get(entry.key) == null || order.get(entry.key).size() == 0)
+											error_message = "Blank value in order column : " + getColumnHeaderName(entry.key)
+										else
+											error_message = "Invalid value " + order.get(entry.key) +" in order column : " + getColumnHeaderName(entry.key)
+										order.put("error_description",error_message)
+										log.error("Order validation failure: ${technical_exception.toMapString()}")
+										sys.defineVariable("technical_exception", new GsonBuilder().create().toJson(technical_exception))
+										invalid_data = true
+										break
+									}
+								}
+							}else{
+								technical_exception.put("exception_message", "Invalid value ${order.get("action")} for order column: action")
+								technical_exception.put("details", order.toMapString())
+								String error_message = ""
+								if(action == null || action.isEmpty())
+									error_message = "Blank value in order column : " + getColumnHeaderName("action")
+								else
+									error_message = "Invalid value " + action +" in order column : " + getColumnHeaderName("action")
+								order.put("error_description",error_message)	
+								log.error("Order validation failure: ${technical_exception.toMapString()}")
+								sys.defineVariable("technical_exception", new GsonBuilder().create().toJson(technical_exception))
+								invalid_data = true
+							}
+
+							if (invalid_data) {
+								order.put("status", "Invalid")
+							}else{
+								order.put("status", "New")
+							}
+						}
+
+						//new_orders <<  new com.google.gson.Gson().toJson(order);
+						new_orders <<  order;
+
+
+
+					}
+					
+					
+					// Apply duplicate check  on each order row
+					Map orderMap =[:]
+					for(Map order: excelRows){
+						String status = order.get("status")
+						
+						if(status == null || status.isEmpty() || !(status == "Invalid") ){
+							String orderKey = String.join("-",order.get("salesorg"),order.get("dist_channel"),order.get("customer_number"),order.get("material"),order.get("valid_from"),order.get("valid_to"),order.get("action"));
+
+							Integer recordCount = orderMap.get(orderKey)
+
+							if(recordCount == null){
+								recordCount = 0;
+							}
+
+							recordCount = recordCount +1
+							orderMap.put(orderKey, recordCount)
+
+							if(recordCount > 1){
+								order.put("status", "Duplicate")
+								order.put("error_description","Duplicate")
+							}
+						}	
+					}
+
+					
+
+				}else{
+					log.error("Either email not found or attachment is missing.")
+
+				}
+				
+				def emailRecord = [:]
+				emailRecord.put("run_id",""+run_id.toString())
+				emailRecord.put("uuid",""+mail_uuid)
+				emailRecord.put("run_date_time",run_date_time.toString())
+				emailRecord.put("email_sender",from)
+				emailRecord.put("email_cc",""+cc)
+				emailRecord.put("email_subject",subject)
+				emailRecord.put("attachment_name",attachedExcelFileName)
+				emailRecord.put("status",(rejection_reason.equals(""))?"New":"To Be Rejected")
+				emailRecord.put("update_ts",nowDateTime())
+				emailRecord.put("rejection_reason",rejection_reason)
+				emailRecord.put("requested_date",requested_date)
+				emailRecord.put("requested_time",requested_time)
+				
+				log.warn("emailRecord - " + emailRecord)
+				
+				def json_email_record = new GsonBuilder().create().toJson(emailRecord)
+				sys.defineVariable("json_email_record", json_email_record)
+				sys.defineVariable("keyCombinationLabelValidation", keyCombinationLabelValidation);
+				sys.defineVariable("keyCombinationValueValidation", keyCombinationValueValidation)
+				sys.defineVariable("tableHeaderNameValidation", tableHeaderNameValidation)
+				
+			]]></script>
+			
+			<insert-datastore datastore-name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master"
+				json-value-map="${json_email_record}" />
+				
+			
+			<loop item="order">
+				<list>
+					<script return="new_orders" />
+				</list>
+
+				<body>
+					<log level="INFO" message="Inserting record - ${order}" />
+					<var-def name="unique_key_val">
+						<script return="unique_key_val"><![CDATA[
+							import com.google.gson.GsonBuilder
+						
+							orderMap = order.getWrappedObject();
+							unique_key_val = orderMap.get("unique_key")
+							json_order_record = new GsonBuilder().create().toJson(orderMap)
+							
+						]]></script>
+					</var-def>
+
+					
+					<insert-datastore datastore-name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master" 
+								json-value-map="${json_order_record}" />
+					
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+						UPDATE @this SET
+						status='In Progress',attachment_name='${attachedExcelFileName}',update_ts = '${nowDateTime()}'
+						where
+						uuid='${mail_uuid}'
+					</datastore>
+
+				</body>
+			</loop>
+				
+			<script><![CDATA[
+				import javax.mail.Flags;
+				import javax.mail.Message;
+
+				File file = new File(downloadedFilePath.toString())
+				if(file.exists()){
+					log.info("Deleting temp file:  " + downloadedFilePath)
+					file.delete()
+				}
+
+				
+				//Move the mails to destination folder only if the from email domain is valid	
+				
+				Message[] messages2Move = new Message[1]
+				messages2Move[0] = message
+				
+				if (messages2Move.size() >  0) {
+					if(rejection_reason.equals("Domain Not Supported"))
+						folder.copyMessages(messages2Move, invalidMailsdestfolder);
+					else
+						folder.copyMessages(messages2Move, processedMailsdestfolder);
+					folder.setFlags(messages2Move, new Flags(Flags.Flag.DELETED), true);
+
+					// Dump out the Flags of the moved messages, to insure that
+					// all got deleted
+					for (int i = 0; i < messages2Move.size(); i++) {
+						if (!messages2Move[i].isSet(Flags.Flag.DELETED))
+							log.info("Message # " + messages[i] + " not deleted");
+					}
+				}
+				
+			]]></script>
+			</if>
+			</case>
+				
+			<script><![CDATA[
+				// Close folders and store
+				
+				folder.close(true);
+				store.close();
+				
+			]]></script>
+		</body>
+		<catch>
+			<script><![CDATA[
+				error_message = _exception_message.getWrappedObject().toString();
+				log.warn("Error in BT-Process Emails v1.0-OTC-OM-NA-BIM-Exclusion Task: "+ error_message);
+			]]></script>
+		</catch>
+	</try>
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Read Emails v1.0-OTC-OM-NA-BIM-Exclusion" Task Completed.
+		</template>
+	</log>
+	
+	<export include-original-data="true">
+		<single-column name="run_id" value="${run_id}"></single-column>
+		<single-column name="run_date_time" value="${run_date_time}"></single-column>
+	</export>
+
+</config>

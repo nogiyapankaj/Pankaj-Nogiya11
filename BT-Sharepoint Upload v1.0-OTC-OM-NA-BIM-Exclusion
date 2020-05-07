@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config" scriptlang="groovy">	
+
+	<!--
+	 Steps : - 
+		BT-Sharepoint Upload v1.0-OTC-OM-NA-BIM-Exclusion 
+			- Uploads file to Sharepoint.
+			
+		Input :-
+		   i. Sharepoint URL to where the file needs to be uploaded.
+		  ii. Sharepoint access key
+		 iii. Sharepoint secret key
+		   
+		Output :- 
+		
+		   i. Uploads the file to destination path in sharepoint.
+		  
+	-->
+
+	<var-def name="token_url" overwrite="false">https://accounts.accesscontrol.windows.net/3596192b-fdf5-4e2c-a6fa-acb706c963d8/tokens/oauth/2</var-def>
+	<var-def name="resource" overwrite="false">00000003-0000-0ff1-ce00-000000000000/pgone.sharepoint.com@3596192b-fdf5-4e2c-a6fa-acb706c963d8</var-def>
+	<var-def name="context_info_uri" overwrite="false">/_api/contextinfo</var-def>
+	
+	
+  	<script><![CDATA[
+		import java.io.IOException;
+		import java.io.InputStream;
+		import java.io.UnsupportedEncodingException;
+		import java.util.ArrayList;
+		import java.util.List;
+		import org.apache.http.entity.ByteArrayEntity;
+
+		import org.apache.commons.io.IOUtils;
+		import org.apache.http.HttpEntity;
+		import org.apache.http.HttpResponse;
+		import org.apache.http.NameValuePair;
+		import org.apache.http.client.HttpClient;
+		import org.apache.http.client.entity.UrlEncodedFormEntity;
+		import org.apache.http.client.methods.HttpPost;
+		import org.apache.http.client.methods.HttpUriRequest;
+		import org.apache.http.impl.client.HttpClientBuilder;
+		import org.apache.http.impl.client.HttpClients;
+		import org.apache.http.message.BasicNameValuePair;
+		import org.apache.http.util.EntityUtils;
+
+		import com.google.gson.JsonObject;
+		import com.google.gson.JsonParser;
+		
+		
+		
+		httpclient = HttpClients.createDefault();
+		
+		requestAccessToken = { client_id,client_secret ->
+			String accessToken = "";
+			
+			List<NameValuePair> params = new ArrayList<>(4);
+			params.add(new BasicNameValuePair("grant_type", "client_credentials"));
+			params.add(new BasicNameValuePair("client_id", client_id.toString()));
+			params.add(new BasicNameValuePair("client_secret", client_secret.toString()));
+			params.add(new BasicNameValuePair("resource", resource.toString()));
+
+			HttpPost request = new HttpPost(token_url.toString());
+			try {
+				request.setEntity(new UrlEncodedFormEntity(params));
+			} catch (UnsupportedEncodingException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+				System.out.println("Exception thrown while setting entity***");
+			}
+
+			String errorMessage = "Request for SharePoint access token failed.";
+			HttpEntity entity = executeRequest(request, errorMessage);
+
+			if (entity == null) {
+				log.info("Entity is null ***");
+			}
+			
+			try {
+				InputStream inputStream = entity.getContent();
+				String responseText = IOUtils.toString(inputStream);
+				JsonObject responseJson = new JsonParser().parse(responseText).getAsJsonObject();
+				accessToken = responseJson.get("access_token").getAsString();
+			} catch (IOException e) {
+				log.info("Exception thrown : ${e}");
+			}
+
+			
+			
+			return accessToken;
+		}
+		
+		executeRequest = { HttpUriRequest request, String errorMessage ->
+			HttpResponse response;
+			try {
+				response = httpclient.execute(request);
+			} catch (IOException e) {
+				log.info("Exception thrown : ${e}");
+			}
+			return response.getEntity();
+		}
+		
+		uploadFile = { byte[] fileBytesToUpload, String baseUrl, String apiUrl , String client_id , String client_secret ->
+			accessToken = requestAccessToken(client_id , client_secret);
+			
+			String uploadUrl = baseUrl+apiUrl;
+			HttpPost postReq = new HttpPost(uploadUrl);
+
+			postReq.addHeader("Accept", "application/json;odata=verbose");
+			postReq.addHeader("Authorization", "Bearer " + accessToken);
+			postReq.addHeader("X-RequestDigest", getFormDigestValue(baseUrl+context_info_uri.toString(), accessToken));
+		  
+			postReq.setEntity(new ByteArrayEntity(fileBytesToUpload));
+
+			String errorMessage = "Error while uploading file to SharePoint";
+			executeRequest(postReq, errorMessage);
+			
+		}
+		
+		getFormDigestValue = { String contextInfoURI, String accessToken->
+			String formDigestValue = "";  
+			
+			HttpPost postMethod = new HttpPost(contextInfoURI);  
+			postMethod.addHeader("Accept","application/json;odata=verbose");
+			postMethod.addHeader("Authorization", "Bearer " + accessToken);
+			
+			try {
+				HttpClient httpClient = HttpClients.createDefault();
+				httpClient.execute(postMethod);
+			
+				HttpResponse response = httpClient.execute(postMethod);
+				String responseBody = EntityUtils.toString(response.getEntity());
+		
+				JsonObject jsonObject = (JsonObject) new JsonParser().parse(responseBody);  
+				formDigestValue = jsonObject.get("d")
+								  .getAsJsonObject().get("GetContextWebInformation")
+								  .getAsJsonObject().get("FormDigestValue").getAsString();
+				
+			} catch (IOException e) {
+				String errorMessage = "Retrieving FormDigestValue failed";
+				log.info("Exception thrown : ${e}");
+			}  
+			return formDigestValue;  
+		  }
+
+	
+  	]]></script>
+</config>

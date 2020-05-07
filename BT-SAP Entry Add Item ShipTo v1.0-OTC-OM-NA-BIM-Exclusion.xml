@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-SAP Entry Add Item ShipTo
+			v1.0-OTC-OM-NA-BIM-Exclusion" Task
+			Started.
+		</template>
+	</log>
+
+	<!-- Steps : - BT-SAP Entry Add Item ShipTo - Executes Add SAP action for 
+		Ship To Key Combination in BIM Exclusion. Input :- i. Getting Data from datastore. 
+		ii. Some Configurational input. Output :- i. added entry into sap. ii. and 
+		validate also. -->
+
+	<include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+	<include-config code="BT-APP Utils v1.0-OTC-OM-NA-BIM-Exclusion" />
+	<include-config code="BT-SAP Utils v1.0-OTC-OM-NA-BIM-Exclusion" />
+
+	<script><![CDATA[
+		MINIMUM_WAIT = 2000;
+		REGULAR_WAIT = 100;
+	]]></script>
+	<var-def name="dataAvailabilityForAdd_SoldTo">
+		false
+	</var-def>
+
+
+	<!-- read bim exclusion data from master -->
+	<var-def name="ds_bim_exclusion_list">
+		<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+			SELECT * from @this WHERE key_combination =
+			'Ship-To Customer' and action = 'Add/Change' and status = 'New'
+		</datastore>
+	</var-def>
+
+	<var-def name="SAP_Credentials">
+		<template>${BIM_CONFIGS.getWrappedObject().get("sap_credentials").toString()}
+		</template>
+	</var-def>
+
+	<secrets-vault-get alias="${SAP_Credentials.toString()}" />
+	<!-- get credentials from secure vault -->
+	<script><![CDATA[
+		Map entryMap_sap = secureEntryMap.getWrappedObject();
+		Map entryMap_email = secureEntryMap.getWrappedObject();
+
+		com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO sap = entryMap_sap.get(SAP_Credentials.toString());
+		sap_usr = sap.getKey().toString();
+		sap_pwd = sap.getValue().toString();
+		error_message = null;
+	]]></script>
+	<!-- Start SAP steps -->
+	<robotics-flow> 
+	<!-- <robotics-flow username="azw-wfdev-rpa20" password="password"> -->
+		<robot driver="desktop" name="driver" close-on-completion="true">
+			<capability name="SEARCH_ALL_WINDOWS" value="true" />
+			<capability name="CLOSE_ALL_WINDOWS" value="false" />
+			<try>
+				<body>
+					<script><![CDATA[
+						def bim_exclusion_list = ds_bim_exclusion_list.getWrappedObject().collect {
+							def map = [:]
+							for(int i=0; i < it.getColumnCount(); i++){
+								map.put(it.getColumnName(i).toLowerCase(), it.get(i).toString())
+							}
+							return map
+						}
+
+						log.info("bim_exclusion_list count -- " + bim_exclusion_list.size());
+						sys.defineVariable("bim_exclusion_list", bim_exclusion_list)
+
+						def bim_common_configs = [:]
+						BIM_COMMON_CONFIGS.getWrappedObject().each { k, v ->
+							bim_common_configs.put(k.toString(), v.toString())
+						}
+						def LONG_WAIT = Integer.valueOf(bim_common_configs.SAP_LONG_WAIT)
+						def SHORT_WAIT = Integer.valueOf(bim_common_configs.SAP_SHORT_WAIT)
+						//def zq_invalid_information_popup = bim_common_configs.invalid_information_popup
+
+						if(ds_bim_exclusion_list.toList().size()>0){
+
+							def processes = executeGroovyScript(running_processes_script.toString())
+
+							if (processes.toSet().contains("saplogon.exe") ) {
+								executeGroovyScript(kill_sap_script.toString())
+							}
+
+							log.warn("[WF] Unable to find running SAP Logon. Going to launch it.")
+							launchSAP()
+							sap = new SAP(driver())
+							driverObject = driver.getWrappedObject()
+							sap.init(BIM_COMMON_CONFIGS.getWrappedObject().get("dll_file_path").toString())
+							openConnection(sap_usr, sap_pwd)
+
+							//Comments : Begin SAP Execution
+
+							//common steps
+							log.info("[SAP] apply transaction field")
+							sap.setValue("wnd[0]/tbar[0]/okcd", "VB01")
+							sap.pressEnter()
+							sleep(REGULAR_WAIT);
+							sap.setValue("wnd[0]/usr/ctxtG000-KSCHL","Z001")
+							sap.pressEnter()
+							sleep(MINIMUM_WAIT);
+							sap.select("wnd[1]/usr/sub:SAPLV14A:0100/radRV130-SELKZ[1,0]")
+							sleep(MINIMUM_WAIT);
+							sap.press("wnd[1]/tbar[0]/btn[0]")
+							sleep(MINIMUM_WAIT);
+
+						}
+					]]></script>
+
+
+					<loop item="record">
+						<list>
+							<var name="bim_exclusion_list" />
+						</list>
+						<body>
+							<script><![CDATA[
+								Map row = record.getWrappedObject()
+								String uuid = row.get("uuid")
+								String key_combination = row.get("key_combination")
+								String salesorg = row.get("salesorg")
+								int length = salesorg.length();
+								if(length>=5){
+									salesorg = salesorg.substring(0,4);
+								}
+							     String dist_channel = row.get("dist_channel")
+								//dist_channel = "01";
+								String customer_number = row.get("customer_number")
+								String material = row.get("material")
+								String valid_from = row.get("valid_from")
+								String valid_to = row.get("valid_to")
+								String action = row.get("action")
+								String unique_key = row.get("unique_key")
+								log.info("unique_key -- " + unique_key)
+								String sapStatus = "Success";
+								String errorDescription = "";
+								String errorCode = BIM_COMMON_CONFIGS.getWrappedObject().get("error_code_check_entry").toString()
+								String errorVal = BIM_COMMON_CONFIGS.getWrappedObject().get("error_code_material").toString()
+								String errorCode_fillAllval = BIM_COMMON_CONFIGS.getWrappedObject().get("errorCode_fillAllColumn").toString()
+								String errorCode_date = BIM_COMMON_CONFIGS.getWrappedObject().get("ERRORCODE_FORDATE").toString()
+								String errorCode_blocked = BIM_COMMON_CONFIGS.getWrappedObject().get("ERRORCODE_BLOCKED_ADD").toString()
+								String errorCode_invaliddate = BIM_COMMON_CONFIGS.getWrappedObject().get("ERRORCODE_INVALID_DATE").toString()
+
+								try{
+									//specific steps
+									sap.setValue("wnd[0]/usr/ctxtKOMGG-VKORG","")
+									sap.setValue("wnd[0]/usr/ctxtKOMGG-VKORG",salesorg)
+									sap.setValue("wnd[0]/usr/ctxtKOMGG-VTWEG","")
+									sap.setValue("wnd[0]/usr/ctxtKOMGG-VTWEG",dist_channel)
+									sap.setValue("wnd[0]/usr/ctxtKOMGG-KUNWE","")
+									sap.setValue("wnd[0]/usr/ctxtKOMGG-KUNWE",customer_number)
+									sap.setValue("wnd[0]/usr/ctxtG000-DATAB","")
+									sap.setValue("wnd[0]/usr/ctxtG000-DATAB",valid_from)
+									sap.setValue("wnd[0]/usr/ctxtG000-DATBI","")
+									sap.setValue("wnd[0]/usr/ctxtG000-DATBI",valid_to)
+									sap.setValue("wnd[0]/usr/tblSAPMV13GTCTRL_FAST_ENTRY/ctxtKOMGG-MATNR[0,0]","")
+									sap.setValue("wnd[0]/usr/tblSAPMV13GTCTRL_FAST_ENTRY/ctxtKOMGG-MATNR[0,0]",material)
+									sap.pressEnter()
+									errorDescription = sap.getValue("wnd[0]/sbar/pane[0]").trim()
+									log.info("bottom taskbar errorDescription" +errorDescription)
+									matError_check = "Material "+material+" does not exist";
+									sleep(MINIMUM_WAIT);
+									if(errorDescription.contains(matError_check.toString())||errorDescription.contains(errorVal.toString())||
+									errorDescription.contains(errorCode.toString())||errorDescription.contains(errorCode_date.toString())||
+									errorDescription.contains(errorCode_fillAllval.toString())||errorDescription.contains(errorCode_invaliddate.toString())) {
+										log.info(errorDescription)
+										sapStatus = "Failed";
+										errorFunctionSteps()
+									}else{
+										errorDescription = "";
+										sleep(REGULAR_WAIT);
+										sap.press("wnd[0]/usr/btnFCODE_MARL")
+										sleep(REGULAR_WAIT);
+										sap.press("wnd[0]/tbar[0]/btn[11]")
+										sleep(REGULAR_WAIT);
+									}
+
+								}catch( Exception e){
+									log.error("Unknown Exception in -BT-SAP Entry Add Item ShipTo v1.0-OTC-OM-NA-BIM-Exclusion - " + e.getMessage())
+									e.printStackTrace()
+									sapStatus = "Failed";
+									errorDescription = "Unknown Exception";
+									log.info("Exception at record level")
+									sys.defineVariable("sapStatus", "Failed")
+									sys.defineVariable("errorDescription", errorDescription)
+									sys.defineVariable("unique_key", unique_key)
+									sys.defineVariable("uuid", uuid)
+									log.error(e.getMessage(), e);
+									return;
+								}
+								sys.defineVariable("sapStatus", sapStatus)
+								sys.defineVariable("errorDescription", errorDescription)
+								sys.defineVariable("unique_key", unique_key)
+								sys.defineVariable("uuid", uuid)
+							]]></script>
+
+							<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+								update @this set status =
+								'${sapStatus}' , error_description =
+								'${errorDescription}',
+								sap_executed = 'Yes',update_ts = '${nowDateTime()}'
+								WHERE uuid = '${uuid}' and unique_key = '${unique_key}' and
+								action = 'Add/Change' and
+								key_combination ='Ship-To Customer' and not status = 'Duplicate'
+							</datastore>
+							
+							<case>
+								<if condition='${errorDescription.toString().equals("Unknown Exception")}'>
+									<script><![CDATA[
+										log.info("Throwing exception for gracefull shutdown of BOT.")
+										throw new Exception("Error in record processing. Throwing exception for gracefull shutdown of BOT.")
+									]]></script>
+								</if>
+							</case>
+						</body>
+					</loop>
+
+					<var-def name="ds_bim_exclusion_list_Add">
+						<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+							SELECT * from @this WHERE
+							key_combination =
+							'Sold-To Customer' and action = 'Add/Change' and
+							(status is Null or
+							status='')
+						</datastore>
+					</var-def>
+					<script><![CDATA[
+						if(ds_bim_exclusion_list.toList().size()>0){
+							log.info("[SAP] press back button to move to the first screen")
+							sap.press("wnd[0]/tbar[0]/btn[3]")
+							log.info("[SAP] press Exit button")
+							sap.press("wnd[0]/tbar[0]/btn[15]")
+							logOff()
+							sap.close()
+						}
+						//Comments : Auto-Cut execution ended
+					]]></script>
+
+				</body>
+				<catch>
+					<script><![CDATA[
+						error_message = _exception_message.getWrappedObject().toString();
+						log.error("SAP Failed error!- "+ error_message);
+						sys.defineVariable("error_message", error_message)
+						if(ds_bim_exclusion_list.toList().size()>0){
+							logOff()
+							sap.close()
+						}
+						throw new Exception("Rethrowing exception for resuming from next record.")
+					]]></script>
+				</catch>
+			</try>
+		</robot>
+	</robotics-flow>
+
+	<!-- Change P&G Exclusion(Z001):Selection Change P&G Exclusion(Z001): Fast 
+		Entry The condition is being processed in the current session. Condition 
+		records saved -->
+
+
+	<log level="INFO">
+		<template>
+			Execution of "BT-SAP Entry Add Item ShipTo
+			v1.0-OTC-OM-NA-BIM-Exclusion" Task Ended.
+		</template>
+	</log>
+
+	<export include-original-data="true">
+		<!-- <single-column name="error_messageshipTo_add" value="${error_message}" 
+			/> -->
+		<single-column name="technical_exception" value="${error_message}" />
+
+	</export>
+</config>

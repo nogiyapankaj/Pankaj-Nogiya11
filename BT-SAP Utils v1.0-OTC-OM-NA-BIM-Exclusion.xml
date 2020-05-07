@@ -1,0 +1,478 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+
+	<script><![CDATA[
+		import java.util.Date;
+		import java.text.SimpleDateFormat;
+		import java.text.DateFormat;
+		import java.util.Calendar;
+
+
+		def bim_configs = [:]
+		BIM_CONFIGS.getWrappedObject().each { k, v ->
+			bim_configs.put(k.toString(), v.toString())
+		}
+		
+		def bim_common_configs = [:]
+		BIM_COMMON_CONFIGS.getWrappedObject().each { k, v ->
+			bim_common_configs.put(k.toString(), v.toString())
+		}
+		def LONG_WAIT = Integer.valueOf(bim_common_configs.SAP_LONG_WAIT)
+		def SHORT_WAIT = Integer.valueOf(bim_common_configs.SAP_SHORT_WAIT)
+		def sleep_time_locked_order = Integer.valueOf(bim_common_configs.locked_order_sleep)
+
+		//Comments : Method for Login into SAP
+
+		openConnection = { usr, pwd ->
+			log.info("[SAP] Attempting to launch " +bim_configs.sap_connection_name+ " connection")
+			sap.openConnection(bim_configs.sap_connection_name)
+
+			log.info("[SAP] Enter user credentails.")
+			sap.setValue("wnd[0]/usr/txtRSYST-BNAME", usr)
+			sap.setValue("wnd[0]/usr/pwdRSYST-BCODE", pwd)
+
+			log.info("[WF] Switch to SAP Frontend Session window.")
+			switchToExistingWindow(bim_common_configs.SAP_FRONTEND_SESSION_WND)
+
+			log.info("[SAP] Click Enter button.")
+			sap.press("wnd[0]/tbar[0]/btn[0]")
+
+			// Check SAP Easy Access window
+			if ( !isWindowPresent(bim_common_configs.SAP_EASY_ACCESS_WND, SHORT_WAIT) ) {
+
+				// Check Multi Session popup
+				if (isWindowPresent(bim_common_configs.SAP_MULTIPLE_POPUP, 1)) {
+					log.info("[WF] Select multi session option and confirm.")
+					sap.select("wnd[1]/usr/radMULTI_LOGON_OPT2")
+					sap.pressEnter()
+
+				} else if ($$(".Button[name='Continue']").size() > 0) {
+					log.info("[WF] Click Continue on Information pupop.")
+					$(".Button[name='Continue']").click()
+
+				} else {
+					log.error("Unable to log in using user: ${sap_usr}")
+					throw new RuntimeException("Unable to log in using user: ${sap_usr}")
+				}/*  else {
+					log.error("Unable to log in using user: ${sap_usr}")
+					throw new RuntimeException("Unable to log in using user: ${sap_usr}")
+				} */
+			}
+
+			log.info("[WF] Switch to SAP Access window")
+			waitAndSwitchTo(bim_common_configs.SAP_EASY_ACCESS_WND, SHORT_WAIT)
+
+
+		}
+
+		//Comments : Method for Logout from  SAP.
+
+		logOff = {
+			log.info("[SAP] Press Close")
+			sap.pressClose()
+
+			log.info("[WF] Switch to Log Off popup")
+			waitAndSwitchTo(bim_common_configs.SAP_LOG_OFF, LONG_WAIT)
+
+			log.info("[SAP] Press Yes button.")
+			sap.press("wnd[1]/usr/btnSPOP-OPTION1")
+
+		}
+		errorFunctionSteps = {
+			sap.press("wnd[0]/tbar[0]/btn[12]")
+			sleep(1000);
+			sap.press("wnd[1]/usr/btnSPOP-OPTION1")
+			sap.setValue("wnd[0]/usr/ctxtG000-KSCHL","")
+			sleep(1000);
+			sap.setValue("wnd[0]/usr/ctxtG000-KSCHL","Z001")
+			sap.pressEnter()
+		}
+
+		errorFunctionStepsDelete = {
+			sap.press("wnd[0]/tbar[0]/btn[12]")
+			sleep(1000);
+			sap.setValue("wnd[0]/usr/ctxtG000-KSCHL","")
+			sap.setValue("wnd[0]/usr/ctxtG000-KSCHL","Z001")
+			sap.pressEnter()
+		}
+		save = {
+			log.info("[SAP] save changes")
+			sap.select("wnd[0]/mbar/menu[0]/menu[5]")
+
+			if (isWindowPresent(bim_common_configs.SAP_SAVE_INCOMPLETE_DOCUMENT, 5)) {
+				log.info("[SAP] press Save button on Save Incomplete Document")
+				sap.press("wnd[1]/usr/btnSPOP-VAROPTION1")
+			}
+
+			if (isWindowPresent(bim_common_configs.SAP_INFORMATION_POPUP, 5)) {
+				log.info("[SAP] press Continue on Information popup - After Save button")
+				sap.press("wnd[1]/tbar[0]/btn[0]")
+			}
+
+		}
+
+		lockedOrder = { locked_salesorg_val, locked_salesgroup_val ->
+			log.info("[SAP] set Sales Group field to: "+locked_salesorg_val)
+			sap.setValue("wnd[0]/usr/ctxtI1-LOW", locked_salesorg_val)
+
+			log.info("[SAP] set User Group field to: "+locked_salesgroup_val)
+			sap.setValue("wnd[0]/usr/ctxtI4-LOW", locked_salesgroup_val)
+
+			log.info("[SAP] press Execute button")
+			sap.press("wnd[0]/tbar[1]/btn[8]")
+
+			waitAndSwitchTo("[REGEXPTITLE:(.*)Data Browser: Table ZVXN_SALSGRP_DET(.*)]", SHORT_WAIT)
+
+			log.info("[SAP] Download report")
+			sap.select("wnd[0]/mbar/menu[1]/menu[5]")
+
+			if (isWindowPresent(bim_common_configs.SAP_SAVE_LIST_AS, 5) == false) {
+				log.warn("[WF] failed to switch to ${bim_common_configs.SAP_SAVE_LIST_AS} window")
+			}
+			log.info("[SAP] Select clipboard")
+			sap.select("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[4,0]")
+
+			log.info("[WF] Press Continue")
+			$(".Button[name='Continue']").click()
+
+			//Comments : Copying email id for locked sales order.
+			def table = clipboardText()
+			table.split("\n").find {
+				if (it.contains(locked_salesgroup_val.toUpperCase()) && it.contains(locked_salesorg_val.toUpperCase())) {
+					def columns = it.split("\\|")
+					recipient =  [columns[10].trim()]
+
+					log.info("Select clipboard owner "+recipient)
+					return true
+				}
+				return false
+			}
+
+			log.info("[SAP] press back button")
+			sap.press("wnd[0]/tbar[0]/btn[3]")
+		}
+
+
+		orderLockedSleep = {locked_formattedtime ->
+
+			Calendar cal = Calendar.getInstance();
+			Date date=cal.getTime();
+			DateFormat dateFormat = new SimpleDateFormat("HH:mm");
+			String currentTime = dateFormat.format(date);
+			log.info("Current Time: " + currentTime);
+			Date d1 = dateFormat.parse(locked_formattedtime);
+			cal.setTime(d1);
+			cal.add(Calendar.MINUTE,sleep_time_locked_order);
+			String newTime = dateFormat.format(cal.getTime());
+			log.info(" New Time: " + newTime);
+			Date d2 = dateFormat.parse(currentTime);
+			Date d3 = dateFormat.parse(newTime);
+			long elapsed = d2.getTime() - d3.getTime();
+			int diffMinutes = elapsed / (60 * 1000);
+			log.info("Difference minutes :"+diffMinutes);
+			if(diffMinutes>=0){
+				log.info("Time is over::");
+
+			}else{
+				int locked_order_sleep = Math.abs(diffMinutes);
+				log.info("Sleep time ::"+locked_order_sleep);
+				sleep_order(locked_order_sleep)
+			}
+
+		}
+
+
+		updateSalesOrder = {salesorder, material ->
+
+			waitAndSwitchTo("[REGEXPTITLE:(.*)Change P&G Standard Order "+salesorder+": Overview(.*)]", LONG_WAIT)
+
+
+			log.info("[SAP] press Reason for rejection tab")
+			sap.select("wnd[0]/usr/tabsTAXI_TABSTRIP_OVERVIEW/tabpT\\\\07")
+
+			log.info("[SAP] Searching for material")
+			sap.press("wnd[0]/usr/tabsTAXI_TABSTRIP_OVERVIEW/tabpT\\\\07/ssubSUBSCREEN_BODY:SAPMV45A:4409/subSUBSCREEN_TC:SAPMV45A:4922/subSUBSCREEN_BUTTONS:SAPMV45A:4050/btnBT_POPO")
+			waitAndSwitchTo(bim_common_configs.SAP_MOVE_ITEM_TOP, LONG_WAIT)
+
+			log.info("[SAP] set Material field to: "+material)
+			sap.setValue("wnd[1]/usr/ctxtRV45A-PO_MATNR", material)
+
+			log.info("[SAP] press Position Cursor button")
+			sap.press("wnd[1]/tbar[0]/btn[0]")
+
+			if (isWindowPresent(bim_common_configs.SAP_INFORMATION_POPUP, 5)) {
+				log.info("[SAP] press Continue on Information popup")
+				sap.press("wnd[1]/tbar[0]/btn[0]")
+
+				throw new RuntimeException("Unable to find material: "+material)
+			}
+
+			waitAndSwitchTo("[REGEXPTITLE:(.*)Change P&G Standard Order "+salesorder+": Overview(.*)]", LONG_WAIT)
+
+			def net_value = "wnd[0]/usr/tabsTAXI_TABSTRIP_OVERVIEW/tabpT\\\\07/ssubSUBSCREEN_BODY:SAPMV45A:4409/subSUBSCREEN_TC:SAPMV45A:4922/tblSAPMV45ATCTRL_UPOS_ABSAGE/txtVBAP-NETWR[3,0]"
+			sap.getValue(net_value)
+			sleep(2000);
+			def netamount_val = sap.getValue(net_value)
+			def trim_netval = netamount_val.substring(0,1)
+			log.info("trim_netval :"+trim_netval)
+			def zero = "0"
+
+			if (trim_netval.equalsIgnoreCase(zero)){
+				log.info("[SAP] Click on cancel Button - Main Screen")
+				sap.press("wnd[0]/tbar[0]/btn[12]")
+
+				waitAndSwitchTo(bim_common_configs.SAP_CANCEL_ORDER_PROCESSING, SHORT_WAIT)
+				log.info("[SAP] Cancel Order - Press Yes")
+				sap.press("wnd[1]/usr/btnSPOP-OPTION1")
+				excution_status.add([salesorder_1: salesorder , material_1: material , status_data: BIM_COMMON_CONFIGS.getWrappedObject().get("state_removal_exception").toString()])
+				successfully.add([salesorder_1: salesorder , material_1: material])
+			}
+			else{
+
+				log.info("[SAP] assert found material number")
+				def drop_down = "wnd[0]/usr/tabsTAXI_TABSTRIP_OVERVIEW/tabpT\\\\07/ssubSUBSCREEN_BODY:SAPMV45A:4409/subSUBSCREEN_TC:SAPMV45A:4922/tblSAPMV45ATCTRL_UPOS_ABSAGE/"
+				sleep(10000)
+				log.info("[SAP] set Customer initiated change reason")
+				sap.selectComboBoxOption(drop_down+ "cmbVBAP-ABGRU[2,0]", "03")
+
+				log.info("[SAP] save changes")
+				sap.select("wnd[0]/mbar/menu[0]/menu[5]")
+
+				sleep(10000)
+
+				if (isWindowPresent(bim_common_configs.SAP_SAVE_INCOMPLETE_DOCUMENT, 5)) {
+					log.info("[SAP] press Save button on Save Incomplete Document")
+					sleep(10000)
+					sap.press("wnd[1]/usr/btnSPOP-VAROPTION1")
+				}
+
+				if (isWindowPresent(bim_common_configs.SAP_INFORMATION_POPUP, 5)) {
+					log.info("[SAP] press Continue on Information popup - After Save button")
+					sap.press("wnd[1]/tbar[0]/btn[0]")
+				}
+				waitAndSwitchTo(bim_common_configs.SAP_CHANGE_SALES_ORDER_INITIAL, LONG_WAIT)
+
+				if (isWindowPresent(bim_common_configs.SAP_CHANGE_SALES_ORDER_INITIAL, LONG_WAIT)) {
+					def status_panel = sap.getValue("wnd[0]/sbar/pane[0]").trim()
+					def locked_match = "Sales document "+salesorder+" is currently being processed"
+					Calendar cal = Calendar.getInstance();
+					Date date=cal.getTime();
+					DateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
+					String formattedDate=dateFormat.format(date);
+					log.info("lock order time: "+formattedDate);
+					def error_message = status_panel
+					if (status_panel.contains(locked_match)) {
+						excution_status.add([salesorder_1: salesorder , material_1: material , status_data: BIM_COMMON_CONFIGS.getWrappedObject().get("state_order_locked").toString()])
+						locked.add([salesorder_1: salesorder , material_1: material , salesorg_1: salesOrg, salesgroup_1: salesGroup , formattedTime : formattedDate])
+					} else {
+						excution_status.add([salesorder_1: salesorder , material_1: material , status_data: BIM_COMMON_CONFIGS.getWrappedObject().get("state_removal_completed").toString()])
+						successfully.add([salesorder_1: salesorder , material_1: material])
+					}
+				}
+
+
+			}
+		}
+
+		saveIgnoringWarnings = {
+
+			log.info("[SAP] save changes")
+			sap.select("wnd[0]/mbar/menu[0]/menu[5]")
+
+			for (i in 0..10) {
+				if ( isWindowPresent(bim_common_configs.SAP_CHANGE_SALES_ORDER_INITIAL, SHORT_WAIT)) return true
+				else {
+					def status = getStatusPanel()
+					if (status.size() > 0) {
+						log.warn("[SAP] Status panel message: $status")
+						sap.pressEnter()
+					}
+
+					if (isWindowPresent("[TITLE:Information]", 1)) {
+						log.info("[WF] Click Continue on Information pupop.")
+
+						if ($$(".Button[name='Continue']")) $(".Button[name='Continue']").click()
+					}
+
+					if (isWindowPresent("[TITLE:Save Incomplete Document]", 1)){
+						log.warn("Save Incomplete Document dialog is present")
+						sap.press("wnd[1]/usr/btnSPOP-VAROPTION1")
+					}
+				}
+			}
+
+			return isWindowPresent(bim_common_configs.SAP_CHANGE_SALES_ORDER_INITIAL, SHORT_WAIT)
+		}
+
+
+		changeSalesOrder = { sales_order ->
+
+			log.info("[SAP] search for '${sales_order}' order")
+			sap.setValue("wnd[0]/usr/ctxtVBAK-VBELN", sales_order)
+
+			log.info("[SAP] press Search button")
+			sap.press("wnd[0]/usr/btnBT_SUCH")
+
+		}
+	]]></script>
+
+	<script><![CDATA[
+		class SAP {
+			def driver
+			public SAP(driver) {
+				this.driver = driver
+			}
+			public void init(String jacobDllPath) {
+				String initScript ="""
+			    import com.workfusion.sap.SapAgent;
+			
+			    SapAgent sapAgent = SapAgent.getInstance("${jacobDllPath}");
+			    scriptContext.put("sapAgent", sapAgent);
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+			public openConnection(String connection) {
+				String initScript ="""
+			   	import com.workfusion.sap.*;
+			    
+			    def sapAgent = scriptContext.get("sapAgent");
+			    sapAgent.openConnection("${connection}");
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+			public setValue(String id, String value) {
+				String initScript ="""
+			    import com.workfusion.sap.SapAgent;
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    sapAgent.setValue("${id}", "${value}");
+			    
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+			public String getValue(String id) {
+				String initScript ="""
+			    import com.workfusion.sap.*;
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    return sapAgent.getValue("${id}");
+			    
+			    
+			    """;
+				return driver.executeScript(initScript, "GROOVY");
+			}
+
+			public pressEnter() {
+				String initScript ="""
+			    import com.workfusion.sap.*;
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    return sapAgent.pressEnter();
+			    
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+			public pressClose() {
+				String initScript ="""
+			    import com.workfusion.sap.*;
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    return sapAgent.pressClose();
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+			public selectTreeElementByNodeKey(treeId, nodeKey) {
+				String initScript ="""
+			    import com.workfusion.sap.*;
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    return sapAgent.selectTreeElementByNodeKey("${treeId}","${nodeKey}");
+			    
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+			public CntrlF10() {
+				String initScript ="""
+			    import java.awt.event.KeyEvent;
+				import java.awt.Robot;
+				
+				Robot robot = new Robot();
+				robot.keyPress(KeyEvent.VK_CONTROL);
+				robot.keyPress(KeyEvent.VK_F10);
+				robot.keyRelease(KeyEvent.VK_F10);
+				robot.keyRelease(KeyEvent.VK_CONTROL);
+			    
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+
+			public press(id) {
+				String initScript ="""
+			    import com.workfusion.sap.*;
+			    
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    return sapAgent.press("${id}");
+			    
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+
+			public select(id) {
+				String initScript ="""
+			    import com.workfusion.sap.*;
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    return sapAgent.select("${id}");
+			    
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+
+
+
+			public selectComboBoxOption(id, option) {
+				String initScript ="""
+				
+			    import com.workfusion.sap.*;
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    return sapAgent.selectComboBoxOption("${id}", "${option}");
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+
+			public close() {
+				String initScript ="""
+			    import com.workfusion.sap.*;
+			    
+			    SapAgent sapAgent = scriptContext.get("sapAgent");
+			    sapAgent.close();
+			    
+			    
+			    """;
+				driver.executeScript(initScript, "GROOVY");
+			}
+		}
+		a=1
+	]]></script>
+
+</config>

@@ -1,0 +1,657 @@
+<?xml version="1.0" encoding="UTF-8"?>
+	<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+		scriptlang="groovy">
+
+		
+		<!--
+		 Steps : - 
+			BT-Business-Exclusion-Summary-Report v1.0-OTC-OM-NA-BIM-Exclusion 
+				- Gets summary of current business process run.
+				- Stores the current run summary to Exclusion Summary Datastore
+				- Queries current year summary records from Exclusion Summary Datastore and writes to an excel.
+				- Calculates monthly consolidataion of step 3 and writes to the same excel.
+				- Uploads the excel to sharepoint		
+			Input :-
+			   i. All processed mails for which Summary is yet to be generated from DS_OTC_OM_NA_BIM_Exclusion_Report_Master.
+			  ii. Count of line items for different status from DS_OTC_OM_NA_BIM_Exclusion_Data_Master for each mail from (i).
+			 iii. Configuration parameters from DS_OTC_OM_NA_BIM_Exclusion_Configurations datastore.
+			   
+			Output :- 
+			
+			   i. A rolling file is created in sharepoint.
+			  ii. Updates summary details to DS_OTC_OM_NA_BIM_Exclusion_Report_Master datastore.
+		-->
+		
+		
+		<include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+		<include-config code="BT-Sharepoint Upload v1.0-OTC-OM-NA-BIM-Exclusion" />
+		
+		<log level="INFO">
+			<template>
+				Execution of BOT "BT-Business-Exclusion-Summary-Report v1.0-OTC-OM-NA-BIM-Exclusion" Task Started.
+			</template>
+		</log>
+      
+      	<var-def name="Sharepoint_Credentials">
+            <template>${BIM_CONFIGS.getWrappedObject().get("sharepoint_credential").toString()}
+            </template>
+        </var-def>
+		
+		<secrets-vault-get alias="${Sharepoint_Credentials.toString()}"></secrets-vault-get>
+		<script><![CDATA[
+		
+			// define SharePoint credentials
+			Map entryMap = secureEntryMap.getWrappedObject();
+			com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO obj = entryMap.get(Sharepoint_Credentials.toString());
+			sys.defineVariable("client_id", obj.getKey().toString());
+			sys.defineVariable("client_secret", obj.getValue().toString());
+			
+		]]></script>
+		
+		<!-- Importing constants from configuration file -->
+		
+		<script><![CDATA[ 
+			baseUrl = BIM_CONFIGS.getWrappedObject().get("base_url").toString(); 
+			apiUrl = BIM_CONFIGS.getWrappedObject().get("api_url_summary_report").toString(); 
+			
+		]]></script>		
+
+		
+		<var-def name="ds_bim_exclusion_total_mails">
+			<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+				SELECT uuid from @this WHERE 
+				(status = 'Processed' or status = 'Rejected') and
+				(total_count is NULL or total_count = '')
+			</datastore>
+		</var-def>
+		
+		
+
+		
+		<script><![CDATA[
+			import java.text.DateFormat;
+			import java.text.SimpleDateFormat;
+		 
+			uuidList = new ArrayList();
+			consolidatedSummaryList = [];
+			totalMailCount = ds_bim_exclusion_total_mails.toList().size();
+			totalDeleteCount = 0;
+			totalAddChangeCount = 0;
+			totalDuplicateCount = 0;
+			totalInvalidCount = 0;
+			totalFailedCount = 0;
+			totalSuccessCount = 0;
+			totalOrderCount = 0;
+			
+			Date date = new Date();
+			DateFormat dateFormat = new SimpleDateFormat("MM/dd/yy");
+			currentDate = dateFormat.format(date);		
+			DateFormat yearFormat4Digit = new SimpleDateFormat("yyyy"); // Just the year, with 4 digits
+			DateFormat yearFormat2Digit = new SimpleDateFormat("yy"); // Just the year, with 2 digits
+			DateFormat monthFormat = new SimpleDateFormat("MM"); // Just the year, with 2 digits
+			currentYearYYYY = yearFormat4Digit.format(Calendar.getInstance().getTime());
+			currentYearYY = yearFormat2Digit.format(Calendar.getInstance().getTime());
+			currentMonth = monthFormat.format(Calendar.getInstance().getTime());
+			currentMonthInt = Integer.parseInt(currentMonth);
+			if(! isLastDayOfMonth(Calendar.getInstance()))
+				currentMonthInt -= 1;
+			
+			def isLastDayOfMonth(Calendar calendar) {
+			
+				boolean isLastDay = calendar.get(Calendar.DATE) == calendar.getActualMaximum(Calendar.DATE);
+				return isLastDay;
+			}
+			
+			
+		]]></script> 
+		
+		<loop item="record">
+			<list>
+				<script return="ds_bim_exclusion_total_mails" />
+			</list>
+			<body>
+				<script><![CDATA[ 
+					uuid = record.getWrappedObject().toList().get(0)
+				]]></script>
+				
+				<var-def name="ds_bim_exclusion_total_order_count">
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+						SELECT count(*) from @this WHERE 
+						uuid = '${uuid}'
+					</datastore>
+				</var-def>
+				
+				<var-def name="ds_bim_exclusion_delete_count">
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+						SELECT count(*) from @this WHERE 
+						action = 'Delete' and
+						uuid = '${uuid}'
+					</datastore>
+				</var-def>
+				
+				<var-def name="ds_bim_exclusion_add_change_count">
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+						SELECT count(*) from @this WHERE 
+						action = 'Add/Change' and
+						uuid = '${uuid}'
+					</datastore>
+				</var-def>
+				
+				<var-def name="ds_bim_exclusion_duplicate_order_count">
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+						SELECT count(*) from @this WHERE 
+						status = 'Duplicate' and
+						uuid = '${uuid}'
+					</datastore>
+				</var-def>
+				
+				<var-def name="ds_bim_exclusion_invalid_order_count">
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+						SELECT count(*) from @this WHERE 
+						status = 'Invalid' and
+						uuid = '${uuid}'
+					</datastore>
+				</var-def>
+				
+				<var-def name="ds_bim_exclusion_failed_order_count">
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+						SELECT count(*) from @this WHERE 
+						status = 'Failed' and
+						uuid = '${uuid}'
+					</datastore>
+				</var-def>
+				
+				<var-def name="ds_bim_exclusion_success_order_count">
+					<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Data_Master">
+						SELECT count(*) from @this WHERE 
+						status = 'Success' and
+						uuid = '${uuid}'
+					</datastore>
+				</var-def>
+				
+				<script><![CDATA[ 
+					totalCount = getCount(ds_bim_exclusion_total_order_count);
+					deleteCount = getCount(ds_bim_exclusion_delete_count);
+					addChangeCount = getCount(ds_bim_exclusion_add_change_count);
+					duplicateCount = getCount(ds_bim_exclusion_duplicate_order_count);
+					invalidCount = getCount(ds_bim_exclusion_invalid_order_count);
+					failedCount = getCount(ds_bim_exclusion_failed_order_count);
+					successCount = getCount(ds_bim_exclusion_success_order_count);
+					
+					
+					def getCount(countFromQuery){
+						try{
+							countFromQuery.get(0).get(0).toInt();
+						}catch(Exception e){
+							return 0;
+						}
+					}
+				]]></script>
+				
+				<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+					UPDATE @this SET
+						total_count = '${totalCount}',
+						add_count = '${addChangeCount}',
+						delete_count = '${deleteCount}',
+						duplicate_count = '${duplicateCount}',
+						invalid_count = '${invalidCount}',
+						failed_count = '${failedCount}',
+						success_count = '${successCount}'
+						where
+							uuid='${uuid}'
+				</datastore>
+				
+				<script><![CDATA[ 
+					totalOrderCount += totalCount;
+					totalDeleteCount += deleteCount;
+					totalAddChangeCount += addChangeCount;
+					totalDuplicateCount += duplicateCount;
+					totalInvalidCount += invalidCount;
+					totalFailedCount += failedCount;
+					totalSuccessCount += successCount;
+					
+				]]></script>
+			</body>
+		</loop>
+		
+		<var-def name="summaryReportData">
+			<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+				select run_date_time,count(uuid) as email_count,SUM(CAST(total_count AS INT)) as total_count,SUM(CAST(add_count AS INT)) as add_count,
+				SUM(CAST(delete_count AS INT)) as delete_count,SUM(CAST(duplicate_count AS INT)) as duplicate_count,
+				SUM(CAST(invalid_count AS INT)) as invalid_count,SUM(CAST(failed_count AS INT)) as failed_count,
+				SUM(CAST(success_count AS INT)) as success_count
+				from @this where run_date_time LIKE '%-${currentYearYYYY}%' and
+				(status = 'Processed' or status = 'Rejected') and
+				not (total_count is NULL or total_count = '')
+				group by run_date_time order by run_date_time
+			</datastore>
+		</var-def>
+		
+		
+		<case>
+			<if condition = '${currentMonthInt != 0}'>
+				<while condition="true" maxloops="${currentMonthInt}" index="ind">
+					<script><![CDATA[
+						monthString = (ind.toInt()>9)?ind.toString()+"":"0"+ind.toString();
+						
+					]]></script>
+					
+					<var-def name="monthlySummaryData">
+						<datastore name="DS_OTC_OM_NA_BIM_Exclusion_Report_Master">
+							select count(uuid) as email_count,SUM(CAST(total_count AS INT)) as total_count,SUM(CAST(add_count AS INT)) as add_count,
+							SUM(CAST(delete_count AS INT)) as delete_count,SUM(CAST(duplicate_count AS INT)) as duplicate_count,
+							SUM(CAST(invalid_count AS INT)) as invalid_count,SUM(CAST(failed_count AS INT)) as failed_count,
+							SUM(CAST(success_count AS INT)) as success_count
+							from @this where run_date_time LIKE '${monthString}%${currentYearYYYY}%' and
+							(status = 'Processed' or status = 'Rejected')
+						</datastore>
+					</var-def>
+					
+					<script><![CDATA[
+						monthlySummaryDataList = monthlySummaryData.toList();
+						monthlySummaryDataMap = [:]
+						if(monthlySummaryDataList !=null && monthlySummaryDataList.size()>0 && monthlySummaryDataList.get(0)?.getAt("email_count")?.toInt()>0){
+							monthlySummaryDataMap.put("month",monthString+"/"+currentYearYY);
+							monthlySummaryDataMap.put("email_count",monthlySummaryDataList.get(0).getAt("email_count").toInt());
+							monthlySummaryDataMap.put("total_count",monthlySummaryDataList.get(0).getAt("total_count").toInt());
+							monthlySummaryDataMap.put("add_count",monthlySummaryDataList.get(0).getAt("add_count").toInt());
+							monthlySummaryDataMap.put("delete_count",monthlySummaryDataList.get(0).getAt("delete_count").toInt());
+							monthlySummaryDataMap.put("duplicate_count",monthlySummaryDataList.get(0).getAt("duplicate_count").toInt());
+							monthlySummaryDataMap.put("invalid_count",monthlySummaryDataList.get(0).getAt("invalid_count").toInt());
+							monthlySummaryDataMap.put("failed_count",monthlySummaryDataList.get(0).getAt("failed_count").toInt());
+							monthlySummaryDataMap.put("success_count",monthlySummaryDataList.get(0).getAt("success_count").toInt());
+							
+						}else{
+							monthlySummaryDataMap.put("month",monthString+"/"+currentYearYY);
+							monthlySummaryDataMap.put("email_count",0);
+							monthlySummaryDataMap.put("total_count",0);
+							monthlySummaryDataMap.put("add_count",0);
+							monthlySummaryDataMap.put("delete_count",0);
+							monthlySummaryDataMap.put("duplicate_count",0);
+							monthlySummaryDataMap.put("invalid_count",0);
+							monthlySummaryDataMap.put("failed_count",0);
+							monthlySummaryDataMap.put("success_count",0);
+						}
+						consolidatedSummaryList.add(monthlySummaryDataMap);
+						
+						
+						
+						
+					]]></script>
+					
+				</while>
+			</if>
+		</case>
+			
+		<try>
+			<body>
+				<script><![CDATA[ 
+					import org.apache.poi.xssf.usermodel.XSSFDataValidationConstraint;
+					import org.apache.poi.xssf.usermodel.XSSFDataValidation;
+					import org.apache.poi.xssf.usermodel.XSSFDataValidationHelper;
+					import org.apache.poi.ss.util.CellRangeAddressList;
+					import java.io.FileOutputStream;
+					import java.io.IOException;
+					import java.util.ArrayList;
+					import java.util.Calendar;
+					import java.util.Date;
+					import java.util.List;
+					import java.io.FileInputStream;
+					import org.apache.poi.xssf.usermodel.XSSFSheet;
+					import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+					import org.apache.poi.xssf.usermodel.XSSFFont;
+					import org.apache.poi.xssf.usermodel.XSSFCellStyle;
+					import org.apache.poi.ss.usermodel.Cell;
+					import org.apache.poi.ss.usermodel.Row;
+					import org.apache.poi.ss.usermodel.Sheet;
+					import org.apache.commons.codec.binary.Base64;
+					import org.apache.commons.io.FileUtils;
+					import java.text.ParseException;
+					import java.text.SimpleDateFormat;
+					import org.apache.poi.ss.usermodel.BorderStyle;
+					import org.apache.poi.ss.usermodel.IndexedColors;
+					import org.apache.poi.ss.usermodel.CellStyle;
+					import org.apache.poi.ss.util.CellRangeAddress; 	
+				
+					error_message = "";
+					List summaryReportList = summaryReportData.toList();
+					
+					//bim_summary_report_fileName
+					filename = "";
+					filename =  BIM_COMMON_CONFIGS.getWrappedObject().get("bim_summary_report_fileName").toString()
+					filename = filename+"_"+currentYearYYYY;
+					filePath = File.createTempFile(filename, ".xlsx");
+					filename = filename+".xlsx";
+					XSSFWorkbook workbook = new XSSFWorkbook();
+					XSSFSheet sheet = workbook.createSheet("Daily Run Summary");
+					
+					
+
+					XSSFCellStyle titleStyle = workbook.createCellStyle();
+					XSSFCellStyle headerStyle = workbook.createCellStyle();
+					XSSFCellStyle cellStyle = workbook.createCellStyle();
+					XSSFFont titleFont = workbook.createFont();
+					XSSFFont headerFont = workbook.createFont();
+					XSSFFont cellFont = workbook.createFont();
+					titleFont.setBold(true);//Make font bold
+					titleFont.setFontHeightInPoints((short) 10)
+					titleStyle.setFont(titleFont);
+					
+					// added column
+					rowhead = sheet.createRow((short)0);
+					rowhead.createCell(0).setCellValue("Exclusion Automation Summary Report");
+					rowhead.getCell(0).setCellStyle(titleStyle);
+					rowhead = sheet.createRow((short)1);
+					rowhead.createCell(0).setCellValue("");
+					
+					headerFont.setFontHeightInPoints((short) 10)
+					headerFont.setBold(true);
+					headerStyle.setFont(headerFont);
+					headerStyle.setWrapText(true);
+					headerStyle.setBorderTop(BorderStyle.THIN);
+					headerStyle.setBorderBottom(BorderStyle.THIN);
+					headerStyle.setBorderLeft(BorderStyle.THIN);
+					headerStyle.setBorderRight(BorderStyle.THIN);
+					
+					cellFont.setFontHeightInPoints((short) 10)
+					cellFont.setBold(false);
+					cellStyle.setFont(cellFont);
+					cellStyle.setWrapText(true);
+					cellStyle.setBorderTop(BorderStyle.THIN);
+					cellStyle.setBorderBottom(BorderStyle.THIN);
+					cellStyle.setBorderLeft(BorderStyle.THIN);
+					cellStyle.setBorderRight(BorderStyle.THIN);
+					
+					sheet.setColumnWidth(0,3000);
+					sheet.setColumnWidth(2,4000);
+					sheet.setColumnWidth(3,4000);
+					sheet.setColumnWidth(4,5000);
+					sheet.setColumnWidth(5,3500);
+					sheet.setColumnWidth(6,4500);
+					sheet.setColumnWidth(7,3500);
+					sheet.setColumnWidth(8,3500);
+					sheet.setColumnWidth(9,3500);
+					sheet.setColumnWidth(10,3500);
+					sheet.setColumnWidth(11,3500);
+					sheet.setColumnWidth(12,2500);
+					sheet.setColumnWidth(13,2500);
+					
+					// Adding Header
+					rowhead = sheet.createRow((short)2);
+					rowhead.createCell(0).setCellValue("Date");
+					rowhead.getCell(0).setCellStyle(headerStyle);
+					rowhead.createCell(1).setCellValue("Time");
+					rowhead.getCell(1).setCellStyle(headerStyle);
+					rowhead.createCell(2).setCellValue("Number of emails received");
+					rowhead.getCell(2).setCellStyle(headerStyle);
+					rowhead.createCell(3).setCellValue("Number of DELETE actions");
+					rowhead.getCell(3).setCellStyle(headerStyle);
+					rowhead.createCell(4).setCellValue("Number of ADD/CHANGE actions");
+					rowhead.getCell(4).setCellStyle(headerStyle);
+					rowhead.createCell(5).setCellValue("Total number of records");
+					rowhead.getCell(5).setCellStyle(headerStyle);
+					rowhead.createCell(6).setCellValue("Number of duplicate records found");
+					rowhead.getCell(6).setCellStyle(headerStyle);
+					rowhead.createCell(7).setCellValue("% of duplicate records found");
+					rowhead.getCell(7).setCellStyle(headerStyle);
+					rowhead.createCell(8).setCellValue("Number of rejections sent");
+					rowhead.getCell(8).setCellStyle(headerStyle);
+					rowhead.createCell(9).setCellValue("% of rejections sent");
+					rowhead.getCell(9).setCellStyle(headerStyle);
+					rowhead.createCell(10).setCellValue("Number of SAP records failed");
+					rowhead.getCell(10).setCellStyle(headerStyle);
+					rowhead.createCell(11).setCellValue("% of SAP records failed");
+					rowhead.getCell(11).setCellStyle(headerStyle);
+					rowhead.createCell(12).setCellValue("Number of successes");
+					rowhead.getCell(12).setCellStyle(headerStyle);
+					rowhead.createCell(13).setCellValue("% of successes");
+					rowhead.getCell(13).setCellStyle(headerStyle);
+					
+					int rowNo=3;
+					for(def summaryRecord : summaryReportList){
+					
+							
+						String[] summary_date_time = summaryRecord.getAt("run_date_time").toString().split(" ");
+						summary_date = "";
+						summary_time = "";
+						if(summary_date_time.size() ==2){
+							summary_date = summary_date_time[0];
+							summary_time = summary_date_time[1];
+						}
+						email_count = summaryRecord.getAt("email_count").toInt();
+						delete_order_count = summaryRecord.getAt("delete_count").toInt();
+						add_change_order_count = summaryRecord.getAt("add_count").toInt();
+						total_order_count = summaryRecord.getAt("total_count").toInt();
+						duplicate_order_count = summaryRecord.getAt("duplicate_count").toInt();
+						reject_order_count = summaryRecord.getAt("invalid_count").toInt();
+						failed_order_count = summaryRecord.getAt("failed_count").toInt();
+						success_order_count = summaryRecord.getAt("success_count").toInt();
+						
+						
+						
+						duplicate_order_perc = "0.00%";
+						reject_order_perc = "0.00%";
+						failed_order_perc = "0.00%";
+						success_order_perc = "0.00%";
+						
+						if(total_order_count !=0){
+							duplicate_order_perc = convertToValidPerc((duplicate_order_count/total_order_count)*100);
+							reject_order_perc = convertToValidPerc((reject_order_count/total_order_count)*100);
+							failed_order_perc = convertToValidPerc((failed_order_count/total_order_count)*100);
+							success_order_perc = convertToValidPerc((success_order_count/total_order_count)*100);
+						}
+						
+					
+						
+						
+						row = sheet.createRow((short)rowNo);
+						row.createCell(0).setCellValue(summary_date);
+						row.getCell(0).setCellStyle(cellStyle);
+						row.createCell(1).setCellValue(summary_time);
+						row.getCell(1).setCellStyle(cellStyle);
+						row.createCell(2).setCellValue(email_count);
+						row.getCell(2).setCellStyle(cellStyle);
+						row.createCell(3).setCellValue(delete_order_count);
+						row.getCell(3).setCellStyle(cellStyle);
+						row.createCell(4).setCellValue(add_change_order_count);
+						row.getCell(4).setCellStyle(cellStyle);
+						row.createCell(5).setCellValue(total_order_count);
+						row.getCell(5).setCellStyle(cellStyle);
+						row.createCell(6).setCellValue(duplicate_order_count);
+						row.getCell(6).setCellStyle(cellStyle);
+						row.createCell(7).setCellValue(duplicate_order_perc);
+						row.getCell(7).setCellStyle(cellStyle);
+						row.createCell(8).setCellValue(reject_order_count);
+						row.getCell(8).setCellStyle(cellStyle);
+						row.createCell(9).setCellValue(reject_order_perc);
+						row.getCell(9).setCellStyle(cellStyle);
+						row.createCell(10).setCellValue(failed_order_count);
+						row.getCell(10).setCellStyle(cellStyle);
+						row.createCell(11).setCellValue(failed_order_perc);
+						row.getCell(11).setCellStyle(cellStyle);
+						row.createCell(12).setCellValue(success_order_count);
+						row.getCell(12).setCellStyle(cellStyle);
+						row.createCell(13).setCellValue(success_order_perc);
+						row.getCell(13).setCellStyle(cellStyle);
+						
+						rowNo++;
+						
+					}
+					
+					sheet.addMergedRegion(new CellRangeAddress(0,0,0,13));
+					
+					
+					if(currentMonthInt != 0){
+						sheet = workbook.createSheet("Monthly Summary");
+						
+						sheet.setColumnWidth(0,3000);
+						sheet.setColumnWidth(1,4000);
+						sheet.setColumnWidth(2,4000);
+						sheet.setColumnWidth(3,5000);
+						sheet.setColumnWidth(4,3500);
+						sheet.setColumnWidth(5,4500);
+						sheet.setColumnWidth(6,3500);
+						sheet.setColumnWidth(7,3500);
+						sheet.setColumnWidth(8,3500);
+						sheet.setColumnWidth(9,3500);
+						sheet.setColumnWidth(10,3500);
+						sheet.setColumnWidth(11,2500);
+						sheet.setColumnWidth(12,2500);
+						// added column
+						rowhead = sheet.createRow((short)0);
+						rowhead.createCell(0).setCellValue("Exclusion Automation Summary Report");
+						rowhead.getCell(0).setCellStyle(titleStyle);
+						rowhead = sheet.createRow((short)1);
+						rowhead.createCell(0).setCellValue("");
+
+					
+						
+						// Adding Header
+						rowhead = sheet.createRow((short)2);
+						rowhead.createCell(0).setCellValue("Month");
+						rowhead.getCell(0).setCellStyle(headerStyle);
+						rowhead.createCell(1).setCellValue("Number of emails received");
+						rowhead.getCell(1).setCellStyle(headerStyle);
+						rowhead.createCell(2).setCellValue("Number of DELETE actions");
+						rowhead.getCell(2).setCellStyle(headerStyle);
+						rowhead.createCell(3).setCellValue("Number of ADD/CHANGE actions");
+						rowhead.getCell(3).setCellStyle(headerStyle);
+						rowhead.createCell(4).setCellValue("Total number of records");
+						rowhead.getCell(4).setCellStyle(headerStyle);
+						rowhead.createCell(5).setCellValue("Number of duplicate records found");
+						rowhead.getCell(5).setCellStyle(headerStyle);
+						rowhead.createCell(6).setCellValue("% of duplicate records found");
+						rowhead.getCell(6).setCellStyle(headerStyle);
+						rowhead.createCell(7).setCellValue("Number of rejections sent");
+						rowhead.getCell(7).setCellStyle(headerStyle);
+						rowhead.createCell(8).setCellValue("% of rejections sent");
+						rowhead.getCell(8).setCellStyle(headerStyle);
+						rowhead.createCell(9).setCellValue("Number of SAP records failed");
+						rowhead.getCell(9).setCellStyle(headerStyle);
+						rowhead.createCell(10).setCellValue("% of SAP records failed");
+						rowhead.getCell(10).setCellStyle(headerStyle);
+						rowhead.createCell(11).setCellValue("Number of successes");
+						rowhead.getCell(11).setCellStyle(headerStyle);
+						rowhead.createCell(12).setCellValue("% of successes");
+						rowhead.getCell(12).setCellStyle(headerStyle);
+						
+						rowNo=3;
+						for(def summaryRecord : consolidatedSummaryList){
+						
+								
+							summary_month = summaryRecord.getAt("month").toString();
+							email_count = summaryRecord.getAt("email_count");
+							delete_order_count = summaryRecord.getAt("delete_count");
+							add_change_order_count = summaryRecord.getAt("add_count");
+							total_order_count = summaryRecord.getAt("total_count");
+							duplicate_order_count = summaryRecord.getAt("duplicate_count");
+							reject_order_count = summaryRecord.getAt("invalid_count");
+							failed_order_count = summaryRecord.getAt("failed_count");
+							success_order_count = summaryRecord.getAt("success_count");
+							
+							
+							duplicate_order_perc = "0.00%";
+							reject_order_perc = "0.00%";
+							failed_order_perc = "0.00%";
+							success_order_perc = "0.00%";
+							
+							if(total_order_count !=0){
+								duplicate_order_perc = convertToValidPerc((duplicate_order_count/total_order_count)*100);
+								reject_order_perc = convertToValidPerc((reject_order_count/total_order_count)*100);
+								failed_order_perc = convertToValidPerc((failed_order_count/total_order_count)*100);
+								success_order_perc = convertToValidPerc((success_order_count/total_order_count)*100);
+							}
+							
+						
+							
+							
+							row = sheet.createRow((short)rowNo);
+							row.createCell(0).setCellValue(summary_month);
+							row.getCell(0).setCellStyle(cellStyle);
+							row.createCell(1).setCellValue(email_count);
+							row.getCell(1).setCellStyle(cellStyle);
+							row.createCell(2).setCellValue(delete_order_count);
+							row.getCell(2).setCellStyle(cellStyle);
+							row.createCell(3).setCellValue(add_change_order_count);
+							row.getCell(3).setCellStyle(cellStyle);
+							row.createCell(4).setCellValue(total_order_count);
+							row.getCell(4).setCellStyle(cellStyle);
+							row.createCell(5).setCellValue(duplicate_order_count);
+							row.getCell(5).setCellStyle(cellStyle);
+							row.createCell(6).setCellValue(duplicate_order_perc);
+							row.getCell(6).setCellStyle(cellStyle);
+							row.createCell(7).setCellValue(reject_order_count);
+							row.getCell(7).setCellStyle(cellStyle);
+							row.createCell(8).setCellValue(reject_order_perc);
+							row.getCell(8).setCellStyle(cellStyle);
+							row.createCell(9).setCellValue(failed_order_count);
+							row.getCell(9).setCellStyle(cellStyle);
+							row.createCell(10).setCellValue(failed_order_perc);
+							row.getCell(10).setCellStyle(cellStyle);
+							row.createCell(11).setCellValue(success_order_count);
+							row.getCell(11).setCellStyle(cellStyle);
+							row.createCell(12).setCellValue(success_order_perc);
+							row.getCell(12).setCellStyle(cellStyle);
+							
+							rowNo++;
+							
+						}
+						sheet.addMergedRegion(new CellRangeAddress(0,0,0,12));
+					}
+					
+					
+					FileOutputStream fileOut = new FileOutputStream(filePath);
+					ByteArrayOutputStream bos = new ByteArrayOutputStream();
+					
+					workbook.write(fileOut);
+					workbook.write(bos);
+					bytes = bos.toByteArray();
+					log.info("Byte length : ${bytes.length}");
+					
+					bos.close();
+					fileOut.close();
+					workbook.close();
+						
+					apiUrl = apiUrl + "Add(url='${filename.toString()}',overwrite=true)"	
+					uploadFile(bytes,baseUrl,apiUrl,client_id.toString(),client_secret.toString())
+					
+					File tempFile = new File(filePath.toString())
+					if(tempFile.exists()){
+						log.info("Deleting temp file:  " + filePath.toString())
+						tempFile.delete()
+					}
+					
+					def convertToValidPerc(def perc){
+						String output = "";
+						if(perc)
+							output = ((double) Math.round(perc * 100.0) / 100.0)+"%";
+						else
+							output =  "0.00%";
+						return output;	
+					}
+						
+					
+				]]></script>
+				
+				
+				
+			</body>
+			<catch>
+				<script><![CDATA[
+					error_message = _exception_message.getWrappedObject().toString();
+					log.warn("BIM Summary Report Error - "+ error_message);
+				]]></script>
+			</catch>
+		</try>
+
+		<log level="INFO">
+			<template>
+				Execution of BOT "BT-Business-Exclusion-Summary-Report v1.0-OTC-OM-NA-BIM-Exclusion" Task Completed.
+			</template>
+		</log>	
+		
+						
+		<export include-original-data="true">
+			<single-column name="error_message" value="${error_message}" />
+		</export>
+	</config>

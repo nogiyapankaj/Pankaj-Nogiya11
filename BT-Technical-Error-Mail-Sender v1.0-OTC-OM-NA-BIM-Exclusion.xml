@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Check exception email to support user. 
+Extracts error details based on error code from the data store -->
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+
+	<!-- this bot will send only technical exception -->
+	<required name="technical_exception" />
+
+	<script><![CDATA[
+		team  = "Hello Team,";
+		regards = "Regards,";
+		errResponse = technical_exception.toString();
+		finalString  = team+"<br>"+"<br>"+errResponse+"<br>"+"<br>"+regards
+	]]></script>
+
+
+
+	<include-config code="BT-Configurations v1.0-OTC-OM-NA-BIM-Exclusion" />
+
+	<var-def name="Email_Credentials">
+		<template>${BIM_CONFIGS.getWrappedObject().get("mail_credentials").toString()}
+		</template>
+	</var-def>
+	<secrets-vault-get alias="${Email_Credentials.toString()}" />
+	<script><![CDATA[
+		error_message = null
+		Map entryMap = secureEntryMap.getWrappedObject();
+		com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO ss = entryMap.get(Email_Credentials.toString());
+		mailbox_username = ss.getKey().toString();
+		mailbox_password = ss.getValue().toString();
+
+		recipient_To = BIM_CONFIGS.getWrappedObject().get("recipient_to").toString()
+		recipient_From = BIM_CONFIGS.getWrappedObject().get("recipient_from").toString()
+		mail_subject = BIM_COMMON_CONFIGS.getWrappedObject().get("mail_tech_exception_subject").toString()
+	]]></script>
+	<try>
+		<body>
+			<mail smtp-host="${BIM_COMMON_CONFIGS.getWrappedObject().get('smtp_host').toString()}"
+				smtp-port="${BIM_COMMON_CONFIGS.getWrappedObject().get('smtp_port').toString()}"
+				type="html" to="${recipient_To.toString()}" from="${recipient_From.toString()}"
+				subject="${mail_subject.toString()}" password="${mailbox_password.toString()}"
+				username="${mailbox_username.toString()}"
+				security="${BIM_COMMON_CONFIGS.getWrappedObject().get('security').toString()}">
+				<template>
+					${finalString}
+				</template>
+
+				<!-- <mail-attach name="${order_file_name.toString()}" mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"> 
+					<file path="${order_file_path.toString()}" type="binary" /> </mail-attach> -->
+			</mail>
+		</body>
+		<catch>
+			<script><![CDATA[
+				error_message = _exception_message.getWrappedObject().toString();
+				log.error("mail Failed error!- "+ error_message);
+			]]></script>
+		</catch>
+	</try>
+	<export include-original-data="true"></export>
+
+</config>

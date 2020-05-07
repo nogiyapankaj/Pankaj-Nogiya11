@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config" scriptlang="groovy">
+
+    <script><![CDATA[
+		log.info("Throwing Exception for sending BOT in Error State.")
+		throw new Exception("Error in BIM Exclusion Process.")
+	]]></script>
+    <export include-original-data="true"></export>
+
+</config>

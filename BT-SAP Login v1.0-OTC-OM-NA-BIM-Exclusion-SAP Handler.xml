@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config xmlns="http://web-harvest.sourceforge.net/schema/1.0/config"
+	scriptlang="groovy">
+
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Sap Login v1.0-OTC-OM-NA-BIM-Exclusion-SAP Handler" Task Started.
+		</template>
+	</log>
+
+	<include-config code="BT-Bim Config v1.0-OTC-OM-NA-BIM-Exclusion-Bot Configration" />
+	<include-config code="BT-Bim Utils v1.0-OTC-OM-NA-BIM-Exclusion-Utils" />
+	<include-config code="BT-Sap Utils v1.0-OTC-OM-NA-BIM-Exclusion-SAP Utils" />
+	
+	<script><![CDATA[
+		def maxsleep = "15000";
+		def midsleep = "10000";
+		def minsleep = "5000";
+		def regularsleep = "2000";
+		sys.defineVariable("maxsleep", maxsleep)
+		sys.defineVariable("midsleep", midsleep)
+		sys.defineVariable("minsleep", minsleep)
+		sys.defineVariable("regularsleep", regularsleep)
+	]]></script>
+
+	<!-- Fetch SAP N6A/N6P Login Credentials -->
+	
+	<var-def name="SAP_Credentials">
+		<template>${BIM_CONFIG.getWrappedObject().get("sap_credentials").toString()}
+		</template>
+	</var-def>
+
+	<secrets-vault-get alias="${SAP_Credentials.toString()}" />
+
+	<script><![CDATA[
+		Map entryMap_sap = secureEntryMap.getWrappedObject();
+		Map entryMap_email = secureEntryMap.getWrappedObject();
+
+		com.freedomoss.crowdcontrol.webharvest.web.dto.SecureEntryDTO sap = entryMap_sap.get(SAP_Credentials.toString());
+		sap_usr = sap.getKey().toString();
+		sap_pwd = sap.getValue().toString();
+	]]></script>
+
+	<robotics-flow username="dev-rpa1-5" password="password">
+		<robot driver="desktop" name="driver" close-on-completion="true">
+			<capability name="SEARCH_ALL_WINDOWS" value="true" />
+			<capability name="CLOSE_ALL_WINDOWS" value="false" />
+			<try>
+				<body>
+					<script><![CDATA[
+					    
+						def bim_config = [:]
+
+						BIM_CONFIG.getWrappedObject().each { k, v ->
+							bim_config.put(k.toString(), v.toString())
+						}
+						
+						def processes = executeGroovyScript(running_processes_script.toString())
+
+
+						if ( !processes.toSet().contains("saplogon.exe") ) {
+							log.warn("[WF] Unable to find running SAP Logon. Going to launch it.")
+							launchSAP()
+						}
+
+						sap = new SAP(driver())
+						driverObject = driver.getWrappedObject()
+						sap.init(BIM_CONFIG.getWrappedObject().get("dll_file_path").toString())
+						
+						// Open connection for SAP 
+						openConnection(sap_usr, sap_pwd)
+
+						log.info("[SAP] press back button to move to the first screen")
+						sap.press("wnd[0]/tbar[0]/btn[3]")
+
+						log.info("[SAP] press Exit button")
+						sap.press("wnd[0]/tbar[0]/btn[15]")
+						logOff()
+						sap.close()
+					]]></script>
+				</body>
+				<catch>
+					<script><![CDATA[
+						error_message = _exception_message.getWrappedObject().toString();
+						log.error("SAP Failed error!- "+ error_message);
+						failure = downloadFileFromAgent(executeGroovyScript(full_screenshot_script.toString()))
+						sys.defineVariable("failure", failure)
+						logOff()
+						sap.close()
+					]]></script>
+				</catch>
+			</try>
+		</robot>
+	</robotics-flow>
+
+	
+	<log level="INFO">
+		<template>
+			Execution of BOT "BT-Sap Login v1.0-OTC-OM-NA-BIM-Exclusion-SAP Handler" Task Ended.
+		</template>
+	</log>
+
+	<export include-original-data="true">
+		<case> <if condition="${sys.isVariableDefined('failure')}"> <single-column 
+			name="screenshot_url" value="${screenshot_url}" /> </if> </case>
+	</export>
+</config>
